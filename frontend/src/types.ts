@@ -29,6 +29,7 @@ export interface Crawler {
   supports_show: boolean;
   supports_debug: boolean;
   supports_manual_login: boolean;
+  sites: { key: string; label: string; script: string }[];
   notes: string;
 }
 

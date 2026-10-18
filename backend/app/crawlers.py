@@ -13,6 +13,29 @@ BRANDS = [
     "toyota", "volvo", "vw",
 ]
 
+# Brands that have more than one crawl site (multiple scrape_<brand>*.py scripts).
+# key = the variant name shown in the UI, value = script filename.
+SITE_VARIANTS: dict[str, dict[str, str]] = {
+    "volvo": {
+        "volvopartscounter": "scrape_volvo.py",
+        "volvo.oempartsonline": "scrape_volvo2.py",
+    },
+    "chrysler": {
+        "mymoparparts": "scrape_chrysler.py",
+        "moparpartsgiant": "scrape_chrysler2.py",
+    },
+}
+
+
+@dataclass(frozen=True)
+class SiteVariant:
+    key: str
+    label: str
+    script: str
+
+    def to_dict(self) -> dict:
+        return {"key": self.key, "label": self.label, "script": self.script}
+
 
 @dataclass(frozen=True)
 class CrawlerSpec:
@@ -31,10 +54,21 @@ class CrawlerSpec:
     supports_manual_login: bool = False
     fresh_flag: str = "--fresh"
     headed_flag: str | None = None     # generic "show browser" flag name, e.g. --headed
+    sites: tuple[SiteVariant, ...] = ()
     notes: str = ""
 
+    def resolve_script(self, site_key: str | None) -> Path:
+        """Pick the script for a site variant (default: the primary script)."""
+        if self.sites:
+            key = (site_key or "").strip() or self.sites[0].key
+            for variant in self.sites:
+                if variant.key == key:
+                    return self.cwd / variant.script
+        return self.script
+
     def build_args(self, params: dict, input_path: Path, output_path: Path) -> list[str]:
-        args = [str(self.script), "--input", str(input_path), "--output", str(output_path)]
+        script = self.resolve_script(params.get("site"))
+        args = [str(script), "--input", str(input_path), "--output", str(output_path)]
         column = (params.get("column") or "").strip()
         if column and self.column_allowed:
             args += ["--column", column]
@@ -66,6 +100,7 @@ class CrawlerSpec:
             "supports_show": self.supports_show or self.headed_flag is not None,
             "supports_debug": self.supports_debug,
             "supports_manual_login": self.supports_manual_login,
+            "sites": [s.to_dict() for s in self.sites],
             "notes": self.notes,
         }
 
@@ -75,6 +110,12 @@ def _brand_crawlers() -> list[CrawlerSpec]:
     specs = []
     for brand in BRANDS:
         folder = settings.brand_dir / f"scrapper-{brand}"
+        variants = SITE_VARIANTS.get(brand)
+        if variants:
+            sites = tuple(SiteVariant(key=k, label=k, script=v) for k, v in variants.items())
+        else:
+            # single-site crawler: one fixed entry so the UI can show it consistently
+            sites = (SiteVariant(key=brand, label=f"{brand} (default)", script=f"scrape_{brand}.py"),)
         specs.append(
             CrawlerSpec(
                 id=f"brand-{brand}",
@@ -87,6 +128,7 @@ def _brand_crawlers() -> list[CrawlerSpec]:
                 supports_limit=False,
                 supports_show=False,   # always opens a visible Chrome via CDP
                 fresh_flag="--start-over",
+                sites=sites,
                 notes="Visible Chrome; solve Cloudflare manually when asked.",
             )
         )
@@ -109,6 +151,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_limit=False,
             supports_fresh=False,
             headed_flag="--headed",
+            sites=(SiteVariant(key="cccone", label="cccone.com", script="crawler.py"),),
             notes="Login via .env; saved auth in playwright/.auth. Tick 'Show browser' (--headed) if login expired.",
         ),
         CrawlerSpec(
@@ -120,6 +163,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             python=keystone_py,
             supports_show=True,
             supports_manual_login=True,
+            sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_crawler.py"),),
             notes="Headless by default; login via .env. Use --show / manual login if blocked.",
         ),
         CrawlerSpec(
@@ -132,6 +176,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             column_allowed=False,
             supports_show=True,
             supports_manual_login=True,
+            sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_model_crawler.py"),),
         ),
         CrawlerSpec(
             id="carid",
@@ -143,6 +188,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_debug=True,
             supports_show=False,       # always visible Chrome via CDP
             fresh_flag="--no-resume",
+            sites=(SiteVariant(key="carid", label="carid.com", script="carid_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
         ),
         CrawlerSpec(
@@ -154,6 +200,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             python=carid_py,
             supports_debug=True,
             fresh_flag="--no-resume",
+            sites=(SiteVariant(key="carid", label="carid.com", script="carid_interchange_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
         ),
         *_brand_crawlers(),

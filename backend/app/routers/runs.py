@@ -52,6 +52,7 @@ async def create_run(
     crawler_id: str = Form(...),
     file: UploadFile = File(...),
     column: str = Form(""),
+    site: str = Form(""),
     limit: int = Form(0),
     fresh: bool = Form(False),
     show: bool = Form(False),
@@ -63,8 +64,9 @@ async def create_run(
     spec = get_crawler(crawler_id)
     if spec is None:
         raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
-    if not spec.script.exists():
-        raise HTTPException(400, f"Script not found: {spec.script}")
+    script = spec.resolve_script(site)
+    if not script.exists():
+        raise HTTPException(400, f"Script not found: {script}")
     if not spec.python.exists():
         raise HTTPException(400, f"Python env not found: {spec.python}")
     if spec.column_required and not column.strip():
@@ -76,6 +78,7 @@ async def create_run(
 
     params = {
         "column": column.strip(),
+        "site": site.strip(),
         "limit": limit,
         "fresh": fresh,
         "show": show,
@@ -100,7 +103,8 @@ async def create_run(
     db.commit()
 
     runner.enqueue(run.id)
-    log_activity(db, user, "create_run", f"queued {spec.name} (run #{run.id})")
+    site_suffix = f" [{site.strip()}]" if site.strip() else ""
+    log_activity(db, user, "create_run", f"queued {spec.name}{site_suffix} (run #{run.id})")
     return to_out(run)
 
 

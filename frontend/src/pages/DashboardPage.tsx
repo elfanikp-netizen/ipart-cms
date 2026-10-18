@@ -14,6 +14,7 @@ export default function DashboardPage() {
   const [crawlerId, setCrawlerId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [column, setColumn] = useState("");
+  const [site, setSite] = useState("");
   const [limit, setLimit] = useState(0);
   const [fresh, setFresh] = useState(false);
   const [show, setShow] = useState(false);
@@ -27,6 +28,11 @@ export default function DashboardPage() {
     () => crawlers.find((c) => c.id === crawlerId) ?? null,
     [crawlers, crawlerId]
   );
+
+  // reset the site to the first variant whenever the crawler changes
+  useEffect(() => {
+    setSite(selected?.sites?.[0]?.key ?? "");
+  }, [selected]);
 
   const groups = useMemo(() => {
     const map = new Map<string, Crawler[]>();
@@ -64,7 +70,7 @@ export default function DashboardPage() {
     setError(null);
     try {
       const run = await createRun(crawlerId, file, {
-        column, limit, fresh, show, debug, manual_login: manualLogin,
+        column, site, limit, fresh, show, debug, manual_login: manualLogin,
       });
       navigate(`/runs/${run.id}`);
     } catch (err) {
@@ -118,6 +124,21 @@ export default function DashboardPage() {
                   onChange={(e) => setColumn(e.target.value)}
                   placeholder="Header name, letters (A/AA) or number"
                 />
+              </label>
+            )}
+            {selected && selected.sites.length > 0 && (
+              <label>
+                Site
+                <select
+                  value={site}
+                  onChange={(e) => setSite(e.target.value)}
+                  disabled={selected.sites.length === 1}
+                  title={selected.sites.length === 1 ? "This crawler has a single site" : undefined}
+                >
+                  {selected.sites.map((s) => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
               </label>
             )}
             {selected?.supports_limit && (
