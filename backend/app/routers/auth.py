@@ -29,8 +29,8 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is inactive")
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
-    log_activity(db, user, "login", "signed in")
-    token = create_token(user.id, user.username, user.role)
+    log_activity(db, user, "login", "signed in" + (" (stay signed in)" if payload.remember else ""))
+    token = create_token(user.id, user.username, user.role, remember=payload.remember)
     return TokenOut(token=token, user=UserOut.model_validate(user))
 
 

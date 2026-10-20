@@ -52,6 +52,8 @@ class CrawlerSpec:
     supports_show: bool = False
     supports_debug: bool = False
     supports_manual_login: bool = False
+    supports_description: bool = False
+    description_default: str = ""
     fresh_flag: str = "--fresh"
     headed_flag: str | None = None     # generic "show browser" flag name, e.g. --headed
     sites: tuple[SiteVariant, ...] = ()
@@ -72,6 +74,9 @@ class CrawlerSpec:
         column = (params.get("column") or "").strip()
         if column and self.column_allowed:
             args += ["--column", column]
+        description = (params.get("description") or "").strip()
+        if description and self.supports_description:
+            args += ["--description", description]
         limit = int(params.get("limit") or 0)
         if limit > 0 and self.supports_limit:
             args += ["--limit", str(limit)]
@@ -100,6 +105,8 @@ class CrawlerSpec:
             "supports_show": self.supports_show or self.headed_flag is not None,
             "supports_debug": self.supports_debug,
             "supports_manual_login": self.supports_manual_login,
+            "supports_description": self.supports_description,
+            "description_default": self.description_default,
             "sites": [s.to_dict() for s in self.sites],
             "notes": self.notes,
         }
@@ -151,8 +158,10 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_limit=False,
             supports_fresh=False,
             headed_flag="--headed",
+            supports_description=True,
+            description_default="A/M: CAPA",
             sites=(SiteVariant(key="cccone", label="cccone.com", script="crawler.py"),),
-            notes="Login via .env; saved auth in playwright/.auth. Tick 'Show browser' (--headed) if login expired.",
+            notes="CCC credentials come from its .env. Description matching is case-insensitive substring matching; default: A/M: CAPA.",
         ),
         CrawlerSpec(
             id="keystone",

@@ -14,6 +14,23 @@ export function setAuthToken(token: string | null) {
   else delete client.defaults.headers.common["Authorization"];
 }
 
+// AuthContext registers its logout here; called when the token is rejected.
+let onUnauthorized: (() => void) | null = null;
+export function setOnUnauthorized(cb: (() => void) | null) {
+  onUnauthorized = cb;
+}
+
+client.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      // Token expired/invalid while logged in -> drop session, go to /login.
+      if (onUnauthorized) onUnauthorized();
+    }
+    return Promise.reject(error);
+  }
+);
+
 export function errorText(e: unknown): string {
   if (axios.isAxiosError(e)) {
     const detail = (e.response?.data as any)?.detail;
@@ -23,10 +40,18 @@ export function errorText(e: unknown): string {
 }
 
 // ---------------------------------------------------------------- auth
-export const login = (username: string, password: string) =>
-  client.post<{ token: string; user: User }>("/api/auth/login", { username, password }).then((r) => r.data);
+export const login = (username: string, password: string, remember = false) =>
+  client.post<{ token: string; user: User }>("/api/auth/login", { username, password, remember }).then((r) => r.data);
 
 export const fetchMe = () => client.get<User>("/api/auth/me").then((r) => r.data);
+
+// ---------------------------------------------------------------- profile
+export const getProfile = () => client.get<User>("/api/profile").then((r) => r.data);
+export const updateProfile = (data: {
+  display_name?: string;
+  current_password?: string;
+  new_password?: string;
+}) => client.patch<User>("/api/profile", data).then((r) => r.data);
 
 // ---------------------------------------------------------------- users (superadmin)
 export const listUsers = () => client.get<User[]>("/api/users").then((r) => r.data);

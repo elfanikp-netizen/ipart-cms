@@ -5,6 +5,7 @@ import RunDetailPage from "./pages/RunDetailPage";
 import LoginPage from "./pages/LoginPage";
 import AccountsPage from "./pages/AccountsPage";
 import ActivityPage from "./pages/ActivityPage";
+import ProfilePage from "./pages/ProfilePage";
 
 function Shell() {
   const { user, logout } = useAuth();
@@ -17,6 +18,7 @@ function Shell() {
         <nav className="menu">
           <Link to="/">Crawling</Link>
           <Link to="/activity">Activity</Link>
+          <Link to="/profile">Profile</Link>
           {user.role === "superadmin" && <Link to="/accounts">Accounts</Link>}
         </nav>
         <div className="user-chip">
@@ -30,6 +32,7 @@ function Shell() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/runs/:id" element={<RunDetailPage />} />
           <Route path="/activity" element={<ActivityPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
           <Route
             path="/accounts"
             element={user.role === "superadmin" ? <AccountsPage /> : <Navigate to="/" replace />}

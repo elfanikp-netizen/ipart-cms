@@ -9,7 +9,7 @@ exactly like running them by hand.
 
 | Group | Crawlers | Project folder |
 |---|---|---|
-| CCC | Workfile (VIN) | `C:\ELFANI\scrapper-ccc` |
+| CCC | Workfile (VIN; configurable description match, defaults to `A/M: CAPA`) | `C:\ELFANI\scrapper-ccc` |
 | Keystone | Partslink, Find-Model | `C:\ELFANI\scrapper-keystone` |
 | CARiD | Parts, Interchange | `C:\ELFANI\scrapper` |
 | Brands (OEM Parts) | Acura, Audi, BMW, Chrysler, Ford, GMC, Honda, Hyundai, Infiniti, Kia, Lexus, Mazda, Nissan, Porsche, Subaru, Toyota, Volvo, VW | `C:\ELFANI\scrapper-brand\scrapper-*` |
@@ -154,7 +154,7 @@ All endpoints except `/api/auth/login` require an `Authorization: Bearer <token>
 | `POST /api/auth/login` | Log in, returns JWT + user |
 | `GET /api/auth/me` | Current user |
 | `GET /api/crawlers` | List registered crawlers + sites + capabilities |
-| `POST /api/runs` | multipart: `crawler_id`, `file`, `column`, `site`, `limit`, `fresh`, `show`, `debug`, `manual_login` |
+| `POST /api/runs` | multipart: `crawler_id`, `file`, `column`, `site`, `description` (CCC), `limit`, `fresh`, `show`, `debug`, `manual_login` |
 | `GET /api/runs` / `GET /api/runs/{id}` | List / inspect runs |
 | `GET /api/runs/{id}/log?tail=300` | Tail of the live log |
 | `POST /api/runs/{id}/stop` | Kill the run's process tree |

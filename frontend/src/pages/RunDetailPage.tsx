@@ -94,6 +94,7 @@ export default function RunDetailPage() {
         <dd>{String(params.original_filename ?? "-")}</dd>
         {Boolean(params.site) && (<><dt>Site</dt><dd>{String(params.site)}</dd></>)}
         {Boolean(params.column) && (<><dt>Column</dt><dd>{String(params.column)}</dd></>)}
+        {Boolean(params.description) && (<><dt>Description match</dt><dd>{String(params.description)}</dd></>)}
         <dt>Created</dt>
         <dd>{new Date(run.created_at).toLocaleString()}</dd>
         <dt>Started</dt>

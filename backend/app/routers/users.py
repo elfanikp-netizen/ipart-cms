@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..deps import get_current_user, log_activity, require_superadmin
 from ..models import Activity, User
-from ..schemas import ActivityOut, UserCreate, UserOut, UserUpdate
-from ..security import hash_password
+from ..schemas import ActivityOut, ProfileUpdate, UserCreate, UserOut, UserUpdate
+from ..security import hash_password, verify_password
 
 router = APIRouter(prefix="/api", tags=["users"])
 
@@ -17,6 +17,43 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+@router.get("/profile", response_model=UserOut)
+def get_profile(me: User = Depends(get_current_user)):
+    return me
+
+
+@router.patch("/profile", response_model=UserOut)
+def update_profile(
+    payload: ProfileUpdate,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    user = db.get(User, me.id)
+    if user is None or not user.is_active:
+        raise HTTPException(401, "Account is disabled or no longer exists")
+    changed: list[str] = []
+    if payload.display_name is not None:
+        user.display_name = payload.display_name.strip()[:100]
+        changed.append("display_name")
+
+    if payload.new_password:
+        if not payload.current_password or not verify_password(payload.current_password, user.password_hash):
+            raise HTTPException(400, "Current password is incorrect")
+        if len(payload.new_password) < 8:
+            raise HTTPException(400, "New password must be at least 8 characters")
+        user.password_hash = hash_password(payload.new_password)
+        changed.append("password")
+    elif payload.current_password:
+        raise HTTPException(400, "Provide a new password to change your password")
+
+    if not changed:
+        raise HTTPException(400, "No profile changes supplied")
+    db.commit()
+    db.refresh(user)
+    log_activity(db, user, "update_profile", f"updated {', '.join(changed)}")
+    return user
 
 
 # ------------------------------------------------------------------- users

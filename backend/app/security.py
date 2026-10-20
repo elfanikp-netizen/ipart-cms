@@ -15,7 +15,8 @@ import jwt
 from .config import settings
 
 ALGORITHM = "HS256"
-TOKEN_TTL_HOURS = 12
+TOKEN_TTL_HOURS = 24          # default session: 1 day
+TOKEN_TTL_HOURS_REMEMBER = 24 * 30  # "stay signed in": 30 days
 
 
 def hash_password(password: str) -> str:
@@ -33,14 +34,15 @@ def verify_password(password: str, stored: str) -> bool:
     return secrets.compare_digest(candidate, digest)
 
 
-def create_token(user_id: int, username: str, role: str) -> str:
+def create_token(user_id: int, username: str, role: str, remember: bool = False) -> str:
     now = datetime.now(timezone.utc)
+    ttl = TOKEN_TTL_HOURS_REMEMBER if remember else TOKEN_TTL_HOURS
     payload = {
         "sub": str(user_id),
         "username": username,
         "role": role,
         "iat": now,
-        "exp": now + timedelta(hours=TOKEN_TTL_HOURS),
+        "exp": now + timedelta(hours=ttl),
     }
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 

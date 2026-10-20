@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { User } from "../types";
 import { createUser, deleteUser, errorText, listUsers, updateUser } from "../api";
+import TableSearchPagination, { useTableSearch } from "../components/TableSearchPagination";
 
 export default function AccountsPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -10,6 +11,14 @@ export default function AccountsPage() {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState("user");
+  const usersTable = useTableSearch(users, (u) => [
+    u.id,
+    u.username,
+    u.display_name,
+    u.role,
+    u.is_active ? "active" : "inactive",
+    u.last_login_at,
+  ].join(" "));
 
   const load = () => listUsers().then(setUsers).catch((e) => setError(errorText(e)));
   useEffect(() => {
@@ -91,6 +100,17 @@ export default function AccountsPage() {
 
       {error && <p className="error">{error}</p>}
 
+      <TableSearchPagination
+        query={usersTable.query}
+        onQueryChange={usersTable.setQuery}
+        page={usersTable.page}
+        pageCount={usersTable.pageCount}
+        filteredCount={usersTable.filteredCount}
+        start={usersTable.start}
+        end={usersTable.end}
+        onPageChange={usersTable.setPage}
+        placeholder="Search accounts…"
+      />
       <table>
         <thead>
           <tr>
@@ -104,7 +124,7 @@ export default function AccountsPage() {
           </tr>
         </thead>
         <tbody>
-          {users.map((u) => (
+          {usersTable.pageRows.map((u) => (
             <tr key={u.id} className={u.is_active ? "" : "inactive"}>
               <td>{u.id}</td>
               <td>{u.username}</td>
@@ -131,6 +151,7 @@ export default function AccountsPage() {
           ))}
         </tbody>
       </table>
+      {usersTable.filteredCount === 0 && <p className="muted">No accounts match your search.</p>}
     </section>
   );
 }

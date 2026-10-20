@@ -53,6 +53,7 @@ async def create_run(
     file: UploadFile = File(...),
     column: str = Form(""),
     site: str = Form(""),
+    description: str = Form(""),
     limit: int = Form(0),
     fresh: bool = Form(False),
     show: bool = Form(False),
@@ -79,6 +80,7 @@ async def create_run(
     params = {
         "column": column.strip(),
         "site": site.strip(),
+        "description": description.strip(),
         "limit": limit,
         "fresh": fresh,
         "show": show,
@@ -104,7 +106,8 @@ async def create_run(
 
     runner.enqueue(run.id)
     site_suffix = f" [{site.strip()}]" if site.strip() else ""
-    log_activity(db, user, "create_run", f"queued {spec.name}{site_suffix} (run #{run.id})")
+    description_suffix = f" description={description.strip()!r}" if description.strip() and spec.supports_description else ""
+    log_activity(db, user, "create_run", f"queued {spec.name}{site_suffix}{description_suffix} (run #{run.id})")
     return to_out(run)
 
 
