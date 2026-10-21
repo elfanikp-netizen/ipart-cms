@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import urllib.request
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -18,6 +21,7 @@ router = APIRouter(prefix="/api", tags=["runs"])
 
 ALLOWED_INPUT_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
 LOG_TAIL_BYTES = 256 * 1024
+VPN_ADAPTER_PATTERN = r"(?i)(vpn|wireguard|wintun|tap-windows|openvpn|nordlynx|tailscale|zerotier|anyconnect|fortinet|forticlient|globalprotect|proton|mullvad|expressvpn|nordvpn)"
 
 
 def get_db():
@@ -45,6 +49,52 @@ def list_crawlers(_: User = Depends(get_current_user)):
 @router.get("/queue", response_model=QueueOut)
 def queue_status(_: User = Depends(get_current_user)):
     return QueueOut(queued=runner.queue_size(), active_run_id=runner.active_run_id())
+
+
+@router.get("/network-status")
+def network_status(_: User = Depends(get_current_user)):
+    """Estimate VPN use on this Windows host; does not prove the target site route."""
+    vpn_adapters: list[dict[str, str]] = []
+    adapter_check = "unavailable"
+    if os.name == "nt":
+        script = (
+            "Get-NetAdapter -IncludeHidden -ErrorAction Stop | "
+            f"Where-Object {{ $_.Status -eq 'Up' -and ($_.Name -match '{VPN_ADAPTER_PATTERN}' "
+            f"-or $_.InterfaceDescription -match '{VPN_ADAPTER_PATTERN}') }} | "
+            "Select-Object Name,InterfaceDescription | ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+            adapter_check = "complete"
+            if result.stdout.strip():
+                parsed = json.loads(result.stdout)
+                vpn_adapters = parsed if isinstance(parsed, list) else [parsed]
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            adapter_check = "unavailable"
+
+    public_ip = None
+    ip_check = "unavailable"
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=5) as response:
+            public_ip = response.read(64).decode("ascii").strip()
+            ip_check = "complete"
+    except (OSError, UnicodeDecodeError):
+        ip_check = "unavailable"
+
+    return {
+        "public_ip": public_ip,
+        "public_ip_check": ip_check,
+        "vpn_adapters": vpn_adapters,
+        "adapter_check": adapter_check,
+        "vpn_likely": bool(vpn_adapters) if adapter_check == "complete" else None,
+        "note": "This checks the crawler host, not the remote browser. VPN adapters are a heuristic; split tunnels and unrecognized VPN clients may not be detected. The public IP is fetched from api.ipify.org and is not saved.",
+    }
 
 
 @router.post("/runs", response_model=RunOut, status_code=201)

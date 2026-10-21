@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Activity, Crawler, QueueStatus, Run, RunLog, User } from "./types";
+import type { Activity, Crawler, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
 
 // Same-origin by default: the Vite dev proxy (and any reverse proxy like ngrok)
 // forwards /api to the backend, so the UI works over the tunnel URL too.
@@ -77,6 +77,7 @@ export const listRuns = () => client.get<Run[]>("/api/runs").then((r) => r.data)
 export const getRun = (id: number) => client.get<Run>(`/api/runs/${id}`).then((r) => r.data);
 export const getRunLog = (id: number) => client.get<RunLog>(`/api/runs/${id}/log?tail=400`).then((r) => r.data);
 export const queueStatus = () => client.get<QueueStatus>("/api/queue").then((r) => r.data);
+export const getNetworkStatus = () => client.get<NetworkStatus>("/api/network-status").then((r) => r.data);
 export const stopRun = (id: number) => client.post<Run>(`/api/runs/${id}/stop`).then((r) => r.data);
 
 export const outputUrl = (id: number) => `${API}/api/runs/${id}/output`;

@@ -59,6 +59,15 @@ export interface QueueStatus {
   active_run_id: number | null;
 }
 
+export interface NetworkStatus {
+  public_ip: string | null;
+  public_ip_check: "complete" | "unavailable";
+  vpn_adapters: { Name?: string; InterfaceDescription?: string }[];
+  adapter_check: "complete" | "unavailable";
+  vpn_likely: boolean | null;
+  note: string;
+}
+
 export interface RunLog {
   lines: string[];
   truncated: boolean;

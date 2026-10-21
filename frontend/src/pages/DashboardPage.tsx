@@ -5,6 +5,7 @@ import { createRun, errorText, listCrawlers, listRuns, queueStatus, stopRun } fr
 import ProgressBar from "../components/ProgressBar";
 import CrawlerSelect from "../components/CrawlerSelect";
 import TableSearchPagination, { useTableSearch } from "../components/TableSearchPagination";
+import { useNetworkStatus } from "../components/NetworkStatus";
 
 export default function DashboardPage() {
   const [crawlers, setCrawlers] = useState<Crawler[]>([]);
@@ -24,8 +25,10 @@ export default function DashboardPage() {
   const [debug, setDebug] = useState(false);
   const [manualLogin, setManualLogin] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showVpnWarning, setShowVpnWarning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const { status: networkStatus, refresh: refreshNetworkStatus } = useNetworkStatus();
 
   const selected = useMemo(
     () => crawlers.find((c) => c.id === crawlerId) ?? null,
@@ -68,11 +71,11 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const queueRun = async () => {
     if (!file || !crawlerId) return;
     setSubmitting(true);
     setError(null);
+    setShowVpnWarning(false);
     try {
       const run = await createRun(crawlerId, file, {
         column, site, description, limit, fresh, show, debug, manual_login: manualLogin,
@@ -84,9 +87,33 @@ export default function DashboardPage() {
     }
   };
 
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file || !crawlerId) return;
+    setError(null);
+    const latestStatus = await refreshNetworkStatus();
+    if (latestStatus?.vpn_likely !== true) {
+      setShowVpnWarning(true);
+      return;
+    }
+    await queueRun();
+  };
+
   const onStop = async (id: number) => {
     await stopRun(id).catch((e) => setError(errorText(e)));
     listRuns().then(setRuns).catch(() => {});
+  };
+
+  const checkNetwork = async () => {
+    setCheckingNetwork(true);
+    setNetworkError(null);
+    try {
+      setNetworkStatus(await getNetworkStatus());
+    } catch (e) {
+      setNetworkError(errorText(e));
+    } finally {
+      setCheckingNetwork(false);
+    }
   };
 
   return (
@@ -188,6 +215,32 @@ export default function DashboardPage() {
           </button>
         </form>
       </section>
+
+      {showVpnWarning && (
+        <div className="dialog-backdrop" role="presentation">
+          <section className="vpn-warning-dialog" role="alertdialog" aria-modal="true" aria-labelledby="vpn-warning-title">
+            <h2 id="vpn-warning-title">VPN not detected</h2>
+            <p>
+              {networkStatus?.vpn_likely === false
+                ? "No VPN-like active adapter was detected on this host."
+                : "The host VPN status could not be confirmed."}
+            </p>
+            <p>
+              The run will use the current network route for {selected?.name ?? "the selected crawler"}
+              {site ? ` (${selected?.sites.find((s) => s.key === site)?.label ?? site})` : ""}.
+              You can cancel, connect your VPN, and check again, or continue without VPN.
+            </p>
+            {networkStatus?.public_ip && <p className="muted">Current public IP: {networkStatus.public_ip}</p>}
+            <small className="muted">VPN detection is approximate and does not confirm which route the target site receives.</small>
+            <div className="dialog-actions">
+              <button type="button" className="secondary" onClick={() => setShowVpnWarning(false)}>Cancel</button>
+              <button type="button" onClick={() => void queueRun()} disabled={submitting}>
+                {submitting ? "Queueing…" : "Continue without VPN"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <section className="card">
         <h1>
