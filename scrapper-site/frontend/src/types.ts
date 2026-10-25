@@ -31,7 +31,7 @@ export interface Crawler {
   supports_manual_login: boolean;
   supports_description: boolean;
   description_default: string;
-  sites: { key: string; label: string; script: string }[];
+  sites: { key: string; label: string; script: string; supports_fresh?: boolean | null }[];
   notes: string;
 }
 

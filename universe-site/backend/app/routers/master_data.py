@@ -38,6 +38,13 @@ def normalize_vin(value: object) -> str:
     return vin
 
 
+def find_duplicate_vin(db: Session, vehicle_id: int, vin: str, exclude_id: int | None = None):
+    stmt = select(Vin.id).where(Vin.id_vehicle == vehicle_id, Vin.vin_key == vin)
+    if exclude_id is not None:
+        stmt = stmt.where(Vin.id != exclude_id)
+    return db.scalar(stmt)
+
+
 def validate_year(value: object) -> int:
     try:
         year_value = float(value)
@@ -309,8 +316,7 @@ def create_vin(payload: VinCreate, db: Session = Depends(get_db), user: PortalUs
     if vehicle is None:
         raise HTTPException(404, "Vehicle not found")
     vin = normalize_vin(payload.vin)
-    item = db.scalar(select(Vin).where(Vin.id_vehicle == vehicle.id, Vin.vin_key == vin))
-    if item:
+    if find_duplicate_vin(db, vehicle.id, vin):
         raise HTTPException(409, "This VIN already exists for the selected vehicle")
     item = Vin(id_vehicle=vehicle.id, vin=vin, vin_key=vin, notes=payload.notes.strip(),
                created_by=user.id, updated_by=user.id)
@@ -333,7 +339,7 @@ def update_vin(vin_id: int, payload: VinUpdate, db: Session = Depends(get_db), u
     if vehicle is None:
         raise HTTPException(404, "Vehicle not found")
     vin = normalize_vin(payload.vin)
-    duplicate = db.scalar(select(Vin.id).where(Vin.id_vehicle == vehicle.id, Vin.vin_key == vin, Vin.id != item.id))
+    duplicate = find_duplicate_vin(db, vehicle.id, vin, exclude_id=item.id)
     if duplicate:
         raise HTTPException(409, "This VIN already exists for the selected vehicle")
     item.id_vehicle, item.vin, item.vin_key = vehicle.id, vin, vin
@@ -420,6 +426,7 @@ def export_vins_by_vehicle_list(
 def import_vins(file: UploadFile = File(...), db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
     workbook, rows, headers = open_excel(file)
     result = ImportOut()
+    seen_vins: set[tuple[int, str]] = set()
     try:
         indexes = excel_indexes(headers, ("Year", "Make", "Model", "VIN"))
         for row_number, row in enumerate(rows, start=2):
@@ -432,10 +439,20 @@ def import_vins(file: UploadFile = File(...), db: Session = Depends(get_db), use
                     vehicle, vehicle_created, vehicle_updated = resolve_vehicle(db, year, make, model, user.id)
                     result.vehicles_created += int(vehicle_created)
                     result.vehicles_updated += int(vehicle_updated)
-                    existing = db.scalar(select(Vin).where(Vin.id_vehicle == vehicle.id, Vin.vin_key == vin))
+                    duplicate_key = (vehicle.id, vin)
+                    if duplicate_key in seen_vins:
+                        result.skipped += 1
+                        if len(result.errors) < 50:
+                            result.errors.append(f"Row {row_number}: duplicate VIN {vin} in the uploaded workbook")
+                        continue
+                    seen_vins.add(duplicate_key)
+                    existing = db.scalar(select(Vin).where(
+                        Vin.id_vehicle == vehicle.id,
+                        Vin.vin_key == vin,
+                    ))
                     if existing:
                         changed = existing.vin != vin
-                        existing.vin, existing.updated_by = vin, user.id
+                        existing.vin, existing.vin_key, existing.updated_by = vin, vin, user.id
                         result.updated += int(changed)
                         result.skipped += int(not changed)
                     else:

@@ -32,7 +32,7 @@ def import_example_data(path: Path = EXAMPLE_WORKBOOK) -> tuple[int, int, int]:
         if portal_user is None:
             raise RuntimeError("No active Portal account is available to attribute imported records")
         importer = PortalUser(id=portal_user[0], is_active=True)
-        with db.begin():
+        try:
             for row_number, row in enumerate(rows, start=2):
                 try:
                     year = validate_year(row[positions["year"]] if positions["year"] < len(row) else None)
@@ -51,7 +51,11 @@ def import_example_data(path: Path = EXAMPLE_WORKBOOK) -> tuple[int, int, int]:
                 except ValueError as error:
                     print(f"Skipping row {row_number}: {error}", file=sys.stderr)
                     skipped += 1
-        return vehicle_count, vin_count, skipped
+            db.commit()
+            return vehicle_count, vin_count, skipped
+        except Exception:
+            db.rollback()
+            raise
     finally:
         db.close()
         workbook.close()

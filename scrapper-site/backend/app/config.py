@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     carid_dir: Path = Path(r"C:\ELFANI\scrapper")
     brand_dir: Path = Path(r"C:\ELFANI\scrapper-brand")
     ccc_dir: Path = Path(r"C:\ELFANI\scrapper-ccc")
+    scrapper_vins_dir: Path = Path(r"C:\ELFANI\scrapper-vins")
 
     def model_post_init(self, __context) -> None:
         if not self.database_url:

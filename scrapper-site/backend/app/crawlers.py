@@ -32,9 +32,18 @@ class SiteVariant:
     key: str
     label: str
     script: str
+    input_flag: str | None = "--input"
+    output_flag: str = "--output"
+    supports_fresh: bool | None = None
+    fresh_flag: str | None = None
 
     def to_dict(self) -> dict:
-        return {"key": self.key, "label": self.label, "script": self.script}
+        return {
+            "key": self.key,
+            "label": self.label,
+            "script": self.script,
+            "supports_fresh": self.supports_fresh,
+        }
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,7 @@ class CrawlerSpec:
     supports_manual_login: bool = False
     supports_description: bool = False
     supports_resume: bool = True
+    resume_requires_output: bool = True
     description_default: str = ""
     fresh_flag: str = "--fresh"
     headed_flag: str | None = None     # generic "show browser" flag name, e.g. --headed
@@ -62,16 +72,26 @@ class CrawlerSpec:
 
     def resolve_script(self, site_key: str | None) -> Path:
         """Pick the script for a site variant (default: the primary script)."""
+        variant = self.resolve_site(site_key)
+        return self.cwd / variant.script if variant else self.script
+
+    def resolve_site(self, site_key: str | None) -> SiteVariant | None:
         if self.sites:
             key = (site_key or "").strip() or self.sites[0].key
             for variant in self.sites:
                 if variant.key == key:
-                    return self.cwd / variant.script
-        return self.script
+                    return variant
+        return None
 
     def build_args(self, params: dict, input_path: Path, output_path: Path) -> list[str]:
-        script = self.resolve_script(params.get("site"))
-        args = [str(script), "--input", str(input_path), "--output", str(output_path)]
+        variant = self.resolve_site(params.get("site"))
+        script = self.cwd / variant.script if variant else self.script
+        args = [str(script)]
+        if variant is None or variant.input_flag is not None:
+            args += [variant.input_flag if variant else "--input", str(input_path)]
+        else:
+            args.append(str(input_path))
+        args += [variant.output_flag if variant else "--output", str(output_path)]
         column = (params.get("column") or "").strip()
         if column and self.column_allowed:
             args += ["--column", column]
@@ -81,8 +101,9 @@ class CrawlerSpec:
         limit = int(params.get("limit") or 0)
         if limit > 0 and self.supports_limit:
             args += ["--limit", str(limit)]
-        if params.get("fresh") and self.supports_fresh:
-            args.append(self.fresh_flag)
+        supports_fresh = variant.supports_fresh if variant and variant.supports_fresh is not None else self.supports_fresh
+        if params.get("fresh") and supports_fresh:
+            args.append((variant.fresh_flag if variant else None) or self.fresh_flag)
         if params.get("show") and self.supports_show:
             args.append("--show")
         elif params.get("show") and self.headed_flag:
@@ -147,6 +168,7 @@ def _registry() -> dict[str, CrawlerSpec]:
     keystone_py = settings.keystone_dir / ".venv" / "Scripts" / "python.exe"
     carid_py = settings.carid_dir / "venv" / "Scripts" / "python.exe"
     ccc_py = settings.ccc_dir / ".venv" / "Scripts" / "python.exe"
+    vins_py = settings.scrapper_vins_dir / ".venv" / "Scripts" / "python.exe"
     specs: list[CrawlerSpec] = [
         CrawlerSpec(
             id="ccc",
@@ -213,6 +235,37 @@ def _registry() -> dict[str, CrawlerSpec]:
             fresh_flag="--no-resume",
             sites=(SiteVariant(key="carid", label="carid.com", script="carid_interchange_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
+        ),
+        CrawlerSpec(
+            id="vin-lookup",
+            name="VIN Lookup",
+            group="VIN Lookup",
+            script=settings.scrapper_vins_dir / "scrapper_vin.py",
+            cwd=settings.scrapper_vins_dir,
+            python=vins_py,
+            supports_limit=True,
+            supports_fresh=True,
+            fresh_flag="--start-over",
+            supports_show=False,
+            resume_requires_output=False,
+            sites=(
+                SiteVariant(
+                    key="vininspect",
+                    label="VinInspect",
+                    script="scrapper_vin.py",
+                    supports_fresh=True,
+                    fresh_flag="--start-over",
+                ),
+                SiteVariant(
+                    key="google",
+                    label="Google Search",
+                    script="vin_crawler.py",
+                    input_flag=None,
+                    output_flag="-o",
+                    supports_fresh=False,
+                ),
+            ),
+            notes="Both sites find a VIN matching Year/Make/Model, not a specific vehicle. Google Search may require solving a CAPTCHA in its browser window.",
         ),
         *_brand_crawlers(),
     ]

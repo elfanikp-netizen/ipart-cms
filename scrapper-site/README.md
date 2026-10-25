@@ -22,10 +22,13 @@ Vite.
 | CCC | Workfile (VIN; configurable description match, defaults to `A/M: CAPA`) | `C:\ELFANI\scrapper-ccc` |
 | Keystone | Partslink, Find-Model | `C:\ELFANI\scrapper-keystone` |
 | CARiD | Parts, Interchange | `C:\ELFANI\scrapper` |
+| VIN Lookup | VinInspect, Google Search | `C:\ELFANI\scrapper-vins` |
 | Brands (OEM Parts) | Acura, Audi, BMW, Chrysler, Ford, GMC, Honda, Hyundai, Infiniti, Kia, Lexus, Mazda, Nissan, Porsche, Subaru, Toyota, Volvo, VW | `C:\ELFANI\scrapper-brand\scrapper-*` |
 
 Crawler definitions live in [backend/app/crawlers.py](backend/app/crawlers.py).
-Adding a crawler script means registering it there.
+Adding a crawler script means registering it there. VIN Lookup runs with the
+`scrapper-vins\.venv` environment and lets each run choose VinInspect or Google
+Search in the Site selector.
 
 ## Start Scraper services
 

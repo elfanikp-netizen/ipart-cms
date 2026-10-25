@@ -109,7 +109,7 @@ export default function RunDetailPage() {
             ■ Stop run
           </button>
         )}
-        {run.status === "stopped" && (
+        {run.can_continue && (
           <button
             onClick={() => void resumeRun()}
             disabled={!run.can_continue || continuing}

@@ -52,11 +52,14 @@ def run_artifact_path(run: Run, name: str) -> Path | None:
 
 def to_out(run: Run) -> RunOut:
     spec = get_crawler(run.crawler_id)
+    resumable_status = run.status == "stopped" or (
+        run.crawler_id == "vin-lookup" and run.status in {"failed", "success"}
+    )
     out = RunOut.model_validate(run)
     out.crawler_name = spec.name if spec else run.crawler_id
     out.has_output = run_artifact_path(run, "output") is not None
     out.can_continue = (
-        run.status == "stopped"
+        resumable_status
         and run_artifact_path(run, "input") is not None
         and spec is not None
         and spec.resolve_script(json.loads(run.params or "{}").get("site")).is_file()
@@ -239,12 +242,13 @@ def stop_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(ge
     return to_out(run)
 
 
-@router.post("/runs/{run_id}/continue", response_model=RunOut, status_code=201)
+@router.post("/runs/{run_id}/continue", response_model=RunOut)
 def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     run = db.get(Run, run_id)
     if run is None:
         raise HTTPException(404, "Run not found")
-    if run.status != "stopped":
+    is_vin_terminal_run = run.crawler_id == "vin-lookup" and run.status in {"failed", "success"}
+    if run.status != "stopped" and not is_vin_terminal_run:
         raise HTTPException(409, "Only stopped runs can be continued")
     if runner.active_run_id() == run_id:
         raise HTTPException(409, "The stopped crawler process is still shutting down")
@@ -259,7 +263,7 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     input_path = run_artifact_path(run, "input")
     if input_path is None:
         raise HTTPException(409, "The original input workbook is unavailable; this run cannot be continued")
-    if spec.supports_resume and run_artifact_path(run, "output") is None:
+    if spec.supports_resume and spec.resume_requires_output and run_artifact_path(run, "output") is None:
         raise HTTPException(409, "No partial output exists to resume; start a new run instead")
 
     params["fresh"] = False

@@ -35,6 +35,8 @@ export default function DashboardPage() {
     () => crawlers.find((c) => c.id === crawlerId) ?? null,
     [crawlers, crawlerId]
   );
+  const selectedSite = selected?.sites.find((s) => s.key === site);
+  const supportsFresh = selectedSite?.supports_fresh ?? selected?.supports_fresh ?? false;
   const runsTable = useTableSearch(runs, (run) => [
     run.id,
     run.crawler_name,
@@ -196,7 +198,7 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="form-row checkboxes">
-            {selected?.supports_fresh && (
+            {supportsFresh && (
               <label className="check">
                 <input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />
                 Start over (ignore existing results)
@@ -315,7 +317,7 @@ export default function DashboardPage() {
                     {(r.status === "queued" || r.status === "running") && (
                       <button className="danger" onClick={() => onStop(r.id)}>■ Stop</button>
                     )}
-                    {r.status === "stopped" && (
+                    {r.can_continue && (
                       <button
                         className="small"
                         onClick={() => void onContinue(r.id)}
