@@ -1,0 +1,76 @@
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class VehicleFields(BaseModel):
+    year: int = Field(ge=1886, le=2100)
+    make: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=150)
+    notes: str = Field(default="", max_length=4000)
+
+
+class VehicleCreate(VehicleFields):
+    pass
+
+
+class VehicleUpdate(VehicleFields):
+    pass
+
+
+class VehicleOut(VehicleFields):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    vin_count: int = 0
+
+
+class VehicleSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    year: int
+    make: str
+    model: str
+
+
+class VinFields(BaseModel):
+    id_vehicle: int
+    vin: str = Field(min_length=1, max_length=32)
+    notes: str = Field(default="", max_length=4000)
+
+
+class VinCreate(VinFields):
+    pass
+
+
+class VinUpdate(VinFields):
+    pass
+
+
+class VinOut(VinFields):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle: VehicleSummary
+    created_at: datetime
+    updated_at: datetime
+
+
+class PageOut(BaseModel):
+    items: list
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
+class ImportOut(BaseModel):
+    vehicles_created: int = 0
+    vehicles_updated: int = 0
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)

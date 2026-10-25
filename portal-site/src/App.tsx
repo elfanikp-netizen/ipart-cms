@@ -14,6 +14,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 const SCRAPER_URL = import.meta.env.VITE_SCRAPER_URL ?? "/scrapper/";
+const UNIVERSE_URL = import.meta.env.VITE_UNIVERSE_URL ?? "/universe/";
 
 function useAuth() {
   const value = useContext(AuthContext);
@@ -130,13 +131,17 @@ function ApplicationsPage() {
   const { user } = useAuth();
   return (
     <section className="workspace-page">
-      <div className="page-heading"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Applications</h1></div><span className="app-count">01 <i>/ 01</i></span></div>
+      <div className="page-heading"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Applications</h1></div><span className="app-count">{user?.role === "superadmin" ? "02" : "01"} <i>/ {user?.role === "superadmin" ? "02" : "01"}</i></span></div>
       <p className="page-intro">Choose a workspace to continue.</p>
       <div className="app-grid">
         <a className="app-tile" href={SCRAPER_URL}>
           <div className="tile-top"><span className="app-monogram">SC</span><span className="launch-mark" aria-label="Open application">↗</span></div>
           <div className="tile-bottom"><div><p className="eyebrow">DATA OPERATIONS</p><h2>Scraper CMS</h2><p>Run crawlers and manage extraction jobs.</p></div><span className="tile-arrow">Open workspace <b>→</b></span></div>
         </a>
+        {user?.role === "superadmin" && <a className="app-tile" href={UNIVERSE_URL}>
+          <div className="tile-top"><span className="app-monogram">UN</span><span className="launch-mark" aria-label="Open application">↗</span></div>
+          <div className="tile-bottom"><div><p className="eyebrow">MASTER DATA</p><h2>Universe CMS</h2><p>Maintain vehicle and VIN reference data.</p></div><span className="tile-arrow">Open workspace <b>→</b></span></div>
+        </a>}
         <div className="app-placeholder"><span className="placeholder-plus">+</span><p>More applications<br />will appear here</p></div>
       </div>
       <div className="workspace-note"><span className="note-dot" /><p>Signed in as <strong>{user?.display_name || user?.username}</strong>. Your account is shared across applications.</p></div>

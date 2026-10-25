@@ -14,6 +14,15 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      "/universe": {
+        target: "http://localhost:5175",
+        changeOrigin: true,
+        ws: true,
+      },
+      "/api/universe": {
+        target: "http://localhost:8002",
+        changeOrigin: true,
+      },
       "/api/auth": {
         target: "http://localhost:8001",
         changeOrigin: true,

@@ -3,7 +3,8 @@
 This site contains the Portal Apps frontend and the identity API used by
 connected applications. The portal provides sign-in, the application launcher,
 account administration, profile settings, and the shared activity interface.
-The current application launcher opens Scraper CMS at `/scrapper/`.
+The application launcher opens Scraper CMS at `/scrapper/` and Universe Master
+Data at `/universe/` for superadmins.
 
 For the full multi-service architecture, shared credential configuration, and
 local startup instructions, see the [platform README](../README.md).
@@ -19,6 +20,10 @@ The frontend proxies `/api/auth`, `/api/profile`, `/api/users`, and
 `/api/activity` to the identity API. Scraper routes are proxied to Scraper CMS
 by the portal Vite configuration; the portal UI and identity API do not run
 crawlers or manage run artifacts.
+
+The portal also proxies `/universe/` to the Universe UI and `/api/universe` to
+the Universe API. Universe owns its vehicle and VIN domain records; the portal
+continues to own identity and sessions.
 
 ## Run the portal services
 
