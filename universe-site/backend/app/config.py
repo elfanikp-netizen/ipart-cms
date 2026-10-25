@@ -17,8 +17,9 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context) -> None:
         if not self.database_url:
-            db_path = (self.data_dir / "app.db").as_posix()
-            self.database_url = f"sqlite:///{db_path}"
+            raise ValueError("Set database_url in scrapper-site/backend/.env to the PostgreSQL ipart database")
+        if not self.database_url.startswith(("postgresql://", "postgresql+")):
+            raise ValueError("Universe requires PostgreSQL; database_url must use a postgresql driver")
 
 
 settings = Settings()

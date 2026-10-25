@@ -52,6 +52,80 @@ export interface FilterOptions {
   models: string[];
 }
 
+export interface CccMarketRecord {
+  id: number;
+  oem: string;
+  vin: string;
+  crawl_date: string;
+  description: string;
+  vendor: string;
+  market_data: Record<string, unknown> | unknown[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CccMarketPage {
+  items: Pick<CccMarketRecord, "oem" | "vin" | "crawl_date">[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export interface CccMarketOffer {
+  market_index: number;
+  market_data: Record<string, unknown>;
+}
+
+export interface CccMarketFilters {
+  oems: string[];
+  vins: string[];
+  descriptions: string[];
+  vendors: string[];
+}
+
+export interface CccLowestPriceSummary {
+  from_date: string | null;
+  to_date: string | null;
+  vendor_count: number;
+  oem_count: number;
+  lowest_count: number;
+  lost_count: number;
+  vendors: {
+    vendor: string;
+    oem_count: number;
+    won_oem_count: number;
+    lost_oem_count: number;
+    lowest_count: number;
+    lost_count: number;
+    descriptions: {
+      description: string;
+      won_oem_count: number;
+      won_count: number;
+      lost_oem_count: number;
+      lost_count: number;
+    }[];
+  }[];
+}
+
+export interface CccLowestPriceDetail {
+  oem: string;
+  vin: string;
+  crawl_date: string;
+  vendor: string;
+  description: string;
+  price: string;
+  outcome: "won" | "lost";
+  crawl_count?: number;
+}
+
+export interface CccMarketImportSummary {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
 export const client = axios.create({ withCredentials: true });
 
 export function errorText(error: unknown): string {
@@ -72,6 +146,68 @@ export async function getVehicleOptions(search = "", limit = 100) {
 
 export async function getFilterOptions() {
   return (await client.get<FilterOptions>("/api/universe/filters")).data;
+}
+
+export async function getCccMarketPage(params: {
+  page: number;
+  page_size: number;
+  search: string;
+  oem: string;
+  vin: string;
+  description: string;
+  vendor: string;
+}) {
+  return (await client.get<CccMarketPage>("/api/universe/market/ccc", { params })).data;
+}
+
+export async function getCccMarketFilters() {
+  return (await client.get<CccMarketFilters>("/api/universe/market/ccc/filters")).data;
+}
+
+export async function getCccMarketOffers(group: Pick<CccMarketRecord, "oem" | "vin" | "crawl_date">) {
+  return (await client.get<CccMarketOffer[]>("/api/universe/market/ccc/offers", { params: group })).data;
+}
+
+export async function getCccLowestPriceSummary(fromDate = "", toDate = "") {
+  return (await client.get<CccLowestPriceSummary>("/api/universe/market/ccc/lowest-price", {
+    params: { from_date: fromDate || undefined, to_date: toDate || undefined },
+  })).data;
+}
+
+export async function getCccLowestPriceDetails(params: {
+  vendor: string;
+  description: string;
+  outcome: "won" | "lost";
+  metric: "oem" | "crawl";
+  from_date: string;
+  to_date: string;
+}) {
+  return (await client.get<CccLowestPriceDetail[]>("/api/universe/market/ccc/lowest-price/details", { params })).data;
+}
+
+export async function exportCccLowestPriceDetails(params: {
+  vendor: string;
+  description: string;
+  outcome: "won" | "lost";
+  metric: "oem" | "crawl";
+  from_date: string;
+  to_date: string;
+}) {
+  const response = await client.get<Blob>("/api/universe/market/ccc/lowest-price/export", { params, responseType: "blob" });
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `ccc-${params.outcome}-${params.metric}-details.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function importCccMarketExcel(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return (await client.post<CccMarketImportSummary>("/api/universe/market/ccc/import", form)).data;
 }
 
 export async function saveVehicle(id: number | null, values: Pick<Vehicle, "year" | "make" | "model" | "notes">) {

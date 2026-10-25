@@ -79,5 +79,40 @@ def migrate_vin_uniqueness() -> None:
             connection.exec_driver_sql("CREATE INDEX ix_vin_vin_key ON vin (vin_key)")
 
 
+def migrate_ccc_market_rows() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    schema = "universe"
+    inspector = inspect(engine)
+    constraints = inspector.get_unique_constraints("ccc_market_data", schema=schema)
+    crawl_key_constraints = [
+        item["name"] for item in constraints
+        if item.get("column_names") == ["oem", "vin", "crawl_date"] and item.get("name")
+    ]
+    has_offer_key = any(
+        item.get("column_names") == ["oem", "vin", "crawl_date", "market_index"]
+        for item in constraints
+    )
+    columns = {column["name"] for column in inspector.get_columns("ccc_market_data", schema=schema)}
+
+    with engine.begin() as connection:
+        preparer = engine.dialect.identifier_preparer
+        table = f"{preparer.quote_schema(schema)}.{preparer.quote('ccc_market_data')}"
+        if "market_index" not in columns:
+            connection.execute(text(
+                f"ALTER TABLE {table} ADD COLUMN market_index INTEGER NOT NULL DEFAULT 0"
+            ))
+        for name in crawl_key_constraints:
+            connection.execute(text(
+                f"ALTER TABLE {table} DROP CONSTRAINT {preparer.quote(name)}"
+            ))
+        if not has_offer_key:
+            connection.execute(text(
+                f"ALTER TABLE {table} ADD CONSTRAINT uq_ccc_market_oem_vin_date_index "
+                "UNIQUE (oem, vin, crawl_date, market_index)"
+            ))
+
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()

@@ -9,6 +9,8 @@ identity and Scraper run data. For the full platform setup, see the
 
 - `vehicle`: unique Year/Make/Model, normalized for case and whitespace.
 - `vin`: references a vehicle through `id_vehicle`; VINs are unique per vehicle.
+- `universe.ccc_market_data`: CCC crawl summaries and decoded market results,
+  unique by OEM, VIN, and crawl date.
 - PostgreSQL target: database `ipart`, schema `universe`.
 - Vehicle/VIN rows include IDs, notes, creation/update timestamps, and shared
   user IDs for auditing.
@@ -33,6 +35,29 @@ VIN imports resolve or create the matching vehicle first. Imports update
 existing matching records, skip unchanged duplicates, and never create a second
 vehicle with the same Year/Make/Model or a second VIN for the same vehicle.
 Workbook extensions supported are `.xlsx` and `.xlsm`.
+
+## Market Data: CCC
+
+The Market menu contains the CCC list. It can filter by OEM, VIN, description,
+and vendor, and sorts records by newest crawl date first. The list groups offer
+rows by OEM, VIN, and crawl date and displays only those three fields; the
+decoded offers remain stored as separate database rows for each crawl.
+
+The CCC **Lowest Price** view compares numeric `ext-price` values within each
+crawl and description, then groups winning OEM part numbers by vendor and
+description. It reports distinct OEM counts and crawl-win counts separately,
+as well as OEMs/crawls where a vendor did not have the lowest offer. Equal
+lowest-price ties count for each winning vendor. The date range defaults to
+today and the preceding calendar month; both endpoints are included. Click a
+description count to inspect its related OEM/VIN/crawl records and export them
+to Excel.
+
+CCC Excel imports require `VIN`, `OEM`, `date_time`, and `market_data` columns.
+`date_time` is stored as `crawl_date`; `market_data` contains a JSON array of
+market offers. Each JSON object is decoded and stored as its own row in
+`universe.ccc_market_data`, with `market_index` preserving its array position.
+Offer descriptions and vendors are exposed for filtering. Reimporting the same
+OEM, VIN, and crawl date replaces that crawl's complete set of offer rows.
 
 To seed both tables from the supplied example workbook, place it at
 `universe-site/data/Example Data.xlsx`, then run the importer from the portal
@@ -65,8 +90,10 @@ portal proxies `/universe/` and `/api/universe`, keeping the shared HTTP-only
 session cookie on the portal origin.
 
 The API launcher creates `universe-site/backend/.venv` and installs the
-Universe backend requirements the first time it runs. The UI launcher installs
-frontend packages when `node_modules` is absent.
+Universe backend requirements the first time it runs. Universe requires the
+PostgreSQL `ipart` database URL from `scrapper-site/backend/.env` and creates
+tables in schema `universe`. The UI launcher installs frontend packages when
+`node_modules` is absent.
 
 ## API reference
 
@@ -86,6 +113,9 @@ All routes are under `/api/universe` and require a valid Portal session:
 | `DELETE /vins/{id}` | Delete a VIN |
 | `GET /vins/export` | Export filtered VINs as Excel |
 | `POST /vins/import` | Import vehicles and VINs from Excel |
+| `GET /market/ccc` | Filter and page CCC market data, newest crawl first |
+| `GET /market/ccc/filters` | List distinct CCC OEM, VIN, description, and vendor filters |
+| `POST /market/ccc/import` | Import or replace CCC market data from Excel |
 
 ## Development
 

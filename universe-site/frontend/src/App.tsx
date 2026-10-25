@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { client, deleteRecord, downloadExcel, downloadVinExportByVehicleList, errorText, getFilterOptions, getPage, getVehicleOptions, importExcel, saveVehicle, saveVin } from "./api";
 import type { FilterOptions, ImportSummary, Page, Vehicle, VehicleOption, Vin } from "./api";
+import CccMarketPage from "./pages/CccMarketPage";
 
-type Dataset = "vehicles" | "vins";
+type Dataset = "vehicles" | "vins" | "ccc";
+type MasterDataset = Exclude<Dataset, "ccc">;
 type VehicleDraft = { year: string; make: string; model: string; notes: string };
 type VinDraft = { id_vehicle: string; vin: string; notes: string };
 
@@ -13,8 +15,11 @@ interface PortalUser { id: number; username: string; display_name: string; role:
 function App() {
   const [user, setUser] = useState<PortalUser | null>(null);
   const [checking, setChecking] = useState(true);
-  const [activeDataset, setActiveDataset] = useState<Dataset>("vehicles");
   const location = useLocation();
+  const navigate = useNavigate();
+  const activeDataset: Dataset = location.pathname === "/market/ccc"
+    ? "ccc"
+    : location.pathname === "/vins" ? "vins" : "vehicles";
 
   useEffect(() => {
     client.get<PortalUser>("/api/auth/me")
@@ -36,23 +41,30 @@ function App() {
         <div className="side-label">WORKSPACE</div>
         <div className="menu-parent"><span className="menu-parent-icon">▦</span>MASTER DATA</div>
         <nav className="subnav" aria-label="Master data">
-          <button className={activeDataset === "vehicles" ? "active" : ""} onClick={() => setActiveDataset("vehicles")}><span>01</span>Vehicle</button>
-          <button className={activeDataset === "vins" ? "active" : ""} onClick={() => setActiveDataset("vins")}><span>02</span>VIN</button>
+          <button className={activeDataset === "vehicles" ? "active" : ""} onClick={() => navigate("/vehicles")}><span>01</span>Vehicle</button>
+          <button className={activeDataset === "vins" ? "active" : ""} onClick={() => navigate("/vins")}><span>02</span>VIN</button>
+        </nav>
+        <div className="menu-parent market-menu-parent"><span className="menu-parent-icon">▤</span>MARKET</div>
+        <nav className="subnav" aria-label="Market">
+          <button className={activeDataset === "ccc" ? "active" : ""} onClick={() => navigate("/market/ccc")}><span>01</span>CCC</button>
         </nav>
         <div className="sidebar-bottom"><a href="/">← Portal home</a><span>IPART · DATA SERVICES</span></div>
       </aside>
       <main className="main-area">
-        <header className="topbar"><div><span className="crumb">MASTER DATA</span><span className="crumb-divider">/</span><strong>{activeDataset === "vehicles" ? "Vehicle" : "VIN"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
+        <header className="topbar"><div><span className="crumb">{activeDataset === "ccc" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
         <Routes>
-          <Route path="/" element={<MasterDataPage dataset={activeDataset} />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="/" element={<Navigate to="/vehicles" replace />} />
+          <Route path="/vehicles" element={<MasterDataPage dataset="vehicles" />} />
+          <Route path="/vins" element={<MasterDataPage dataset="vins" />} />
+          <Route path="/market/ccc" element={<CccMarketPage />} />
+          <Route path="*" element={<Navigate to="/vehicles" replace />} />
         </Routes>
       </main>
     </div>
   );
 }
 
-function MasterDataPage({ dataset }: { dataset: Dataset }) {
+function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
   const [vehicles, setVehicles] = useState<Page<Vehicle>>({ items: [], page: 1, page_size: 10, total: 0, pages: 0 });
   const [vins, setVins] = useState<Page<Vin>>({ items: [], page: 1, page_size: 10, total: 0, pages: 0 });
   const [page, setPage] = useState(1);

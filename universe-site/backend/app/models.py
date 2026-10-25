@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import (Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func)
+from sqlalchemy import (Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func)
 from sqlalchemy.orm import relationship
 
 from .db import Base, engine
@@ -57,3 +57,23 @@ class Vin(Base):
     updated_by = Column(Integer, nullable=True)
 
     vehicle = relationship("Vehicle", back_populates="vins")
+
+
+class CccMarketRecord(Base):
+    __tablename__ = "ccc_market_data"
+    __table_args__ = (
+        UniqueConstraint("oem", "vin", "crawl_date", "market_index", name="uq_ccc_market_oem_vin_date_index"),
+        Index("ix_ccc_market_crawl_date", "crawl_date"),
+        {"schema": APP_SCHEMA} if APP_SCHEMA else {},
+    )
+
+    id = Column(Integer, primary_key=True)
+    oem = Column(String(150), nullable=False)
+    vin = Column(String(32), nullable=False)
+    crawl_date = Column(DateTime(timezone=True), nullable=False)
+    market_index = Column(Integer, nullable=False, default=0)
+    description = Column(Text, nullable=False, default="")
+    vendor = Column(Text, nullable=False, default="")
+    market_data = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

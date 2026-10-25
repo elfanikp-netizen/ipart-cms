@@ -1,0 +1,12 @@
+.lowest-count-button{min-width:30px;padding:5px 7px;border:1px solid transparent;border-radius:3px;background:transparent;font:10px var(--mono);text-align:right}.lowest-count-button:hover{border-color:var(--line);background:#f3f7f3;text-decoration:underline}.lowest-count-button.won-count{color:var(--green)}.lowest-count-button.lost-count{color:#a94c3e}.lowest-vendor-row td:last-child{color:#a94c3e}.lowest-detail-dialog{width:min(1000px,100%)}.lowest-detail-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);color:var(--muted);font:9px var(--mono)}.lowest-detail-actions .outline-button{height:31px}
+
+.lowest-price-table{width:100%;min-width:860px;table-layout:fixed;font-variant-numeric:tabular-nums}
+.lowest-price-table col.lowest-label-column{width:40%}.lowest-price-table col:not(.lowest-label-column){width:15%}
+.lowest-price-table th:first-child,.lowest-price-table td:first-child{width:40%;text-align:left}
+.lowest-price-table th:not(:first-child),.lowest-price-table td:not(:first-child){width:15%;padding-right:18px;text-align:right;white-space:nowrap}
+.lowest-price-table thead th{font-size:8px}
+.lowest-vendor-row th,.lowest-vendor-row td{height:43px}
+.lowest-vendor-row td{font:11px var(--mono);font-weight:600}
+.lowest-description-row td{height:39px}
+.lowest-count-button,.lowest-metric-value{display:block;width:100%;min-height:29px;margin:0;padding:4px 0;text-align:right;font:inherit;font-variant-numeric:tabular-nums;box-sizing:border-box}
+.lowest-count-button{min-width:0;border:0;border-radius:0;background:transparent;cursor:pointer}

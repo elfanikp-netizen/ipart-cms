@@ -74,3 +74,32 @@ class ImportOut(BaseModel):
     updated: int = 0
     skipped: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+class CccMarketRecordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    oem: str
+    vin: str
+    crawl_date: datetime
+    market_index: int
+    description: str
+    vendor: str
+    market_data: dict | list
+    created_at: datetime
+    updated_at: datetime
+
+
+class CccMarketGroupOut(BaseModel):
+    oem: str
+    vin: str
+    crawl_date: datetime
+
+
+class CccMarketPageOut(BaseModel):
+    items: list[CccMarketGroupOut]
+    page: int
+    page_size: int
+    total: int
+    pages: int
