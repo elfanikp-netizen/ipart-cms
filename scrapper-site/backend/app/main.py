@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .db import Base, SessionLocal, engine, ensure_database_schema
+from .db import Base, SessionLocal, engine, ensure_database_schema, migrate_user_app_access
 from .routers import runs
 from .runner import runner
 
@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     ensure_database_schema()
     migrate_identity_schema()
     Base.metadata.create_all(engine)
+    migrate_user_app_access()
     migrate_columns()
     runner.start()
     yield

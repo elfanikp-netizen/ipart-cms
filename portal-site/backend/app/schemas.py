@@ -17,6 +17,7 @@ class UserOut(BaseModel):
     display_name: str
     role: str
     is_active: bool
+    app_access: dict[str, bool] = {"scraper": True, "universe": False}
     created_at: datetime
     last_login_at: datetime | None
 
@@ -26,6 +27,7 @@ class UserCreate(BaseModel):
     password: str
     display_name: str = ""
     role: str = "user"
+    app_access: dict[str, bool] | None = None
 
 
 class UserUpdate(BaseModel):
@@ -33,6 +35,7 @@ class UserUpdate(BaseModel):
     display_name: str | None = None
     role: str | None = None
     is_active: bool | None = None
+    app_access: dict[str, bool] | None = None
 
 
 class ProfileUpdate(BaseModel):

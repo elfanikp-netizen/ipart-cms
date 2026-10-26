@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .db import Base, SessionLocal, ensure_database_schema, engine
+from .db import Base, SessionLocal, ensure_database_schema, engine, migrate_user_app_access
 from .models import User
 from .routers import auth, users
 from .security import hash_password
@@ -18,6 +18,7 @@ def seed_superadmin() -> None:
                     display_name="Super Admin",
                     role="superadmin",
                     is_active=True,
+                    app_access={"scraper": True, "universe": True},
                 )
             )
             db.commit()
@@ -27,6 +28,7 @@ def seed_superadmin() -> None:
 async def lifespan(_app: FastAPI):
     ensure_database_schema()
     Base.metadata.create_all(engine)
+    migrate_user_app_access()
     seed_superadmin()
     yield
 

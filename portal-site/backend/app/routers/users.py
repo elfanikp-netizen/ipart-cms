@@ -58,6 +58,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), admin: User 
         display_name=payload.display_name,
         role=payload.role,
         is_active=True,
+        app_access=payload.app_access or ({"scraper": True, "universe": True} if payload.role == "superadmin" else {"scraper": True, "universe": False}),
     )
     db.add(user)
     db.commit()
@@ -81,6 +82,10 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     if payload.role is not None:
         if payload.role not in ("user", "superadmin"):
             raise HTTPException(400, "role must be 'user' or 'superadmin'")
+        if user.role == "superadmin" and user.is_active and payload.role != "superadmin":
+            others = db.query(User).filter(User.role == "superadmin", User.is_active.is_(True), User.id != user.id).count()
+            if others == 0:
+                raise HTTPException(400, "Cannot demote the last active superadmin")
         user.role = payload.role
         changes.append(f"role={payload.role}")
     if payload.is_active is not None:
@@ -90,6 +95,15 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
                 raise HTTPException(400, "Cannot deactivate the last active superadmin")
         user.is_active = payload.is_active
         changes.append(f"is_active={payload.is_active}")
+    if payload.app_access is not None:
+        unknown_apps = set(payload.app_access) - {"scraper", "universe"}
+        if unknown_apps or any(not isinstance(value, bool) for value in payload.app_access.values()):
+            raise HTTPException(400, "app_access must contain scraper/universe boolean values")
+        user.app_access = {
+            "scraper": bool(payload.app_access.get("scraper", False)),
+            "universe": bool(payload.app_access.get("universe", False)),
+        }
+        changes.append(f"app_access={user.app_access}")
     db.commit()
     db.refresh(user)
     if changes:

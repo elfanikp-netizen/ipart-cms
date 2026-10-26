@@ -131,14 +131,14 @@ function ApplicationsPage() {
   const { user } = useAuth();
   return (
     <section className="workspace-page">
-      <div className="page-heading"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Applications</h1></div><span className="app-count">{user?.role === "superadmin" ? "02" : "01"} <i>/ {user?.role === "superadmin" ? "02" : "01"}</i></span></div>
+      <div className="page-heading"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Applications</h1></div><span className="app-count">{(Number(Boolean(user?.app_access.scraper)) + Number(Boolean(user?.app_access.universe))).toString().padStart(2, "0")} <i>/ 02</i></span></div>
       <p className="page-intro">Choose a workspace to continue.</p>
       <div className="app-grid">
-        <a className="app-tile" href={SCRAPER_URL}>
+        {user?.app_access.scraper && <a className="app-tile" href={SCRAPER_URL}>
           <div className="tile-top"><span className="app-monogram">SC</span><span className="launch-mark" aria-label="Open application">↗</span></div>
           <div className="tile-bottom"><div><p className="eyebrow">DATA OPERATIONS</p><h2>Scraper CMS</h2><p>Run crawlers and manage extraction jobs.</p></div><span className="tile-arrow">Open workspace <b>→</b></span></div>
-        </a>
-        {user?.role === "superadmin" && <a className="app-tile" href={UNIVERSE_URL}>
+        </a>}
+        {user?.app_access.universe && <a className="app-tile" href={UNIVERSE_URL}>
           <div className="tile-top"><span className="app-monogram">UN</span><span className="launch-mark" aria-label="Open application">↗</span></div>
           <div className="tile-bottom"><div><p className="eyebrow">MASTER DATA</p><h2>Universe CMS</h2><p>Maintain vehicle and VIN reference data.</p></div><span className="tile-arrow">Open workspace <b>→</b></span></div>
         </a>}
@@ -206,6 +206,7 @@ function AccountsPage() {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState("user");
+  const [appAccess, setAppAccess] = useState<User["app_access"]>({ scraper: true, universe: false });
   const [error, setError] = useState("");
 
   const refresh = () => listUsers().then(setUsers).catch((reason) => setError(errorText(reason)));
@@ -215,12 +216,12 @@ function AccountsPage() {
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setError("");
     try {
-      await createUser({ username, password, display_name: displayName, role });
-      setUsername(""); setPassword(""); setDisplayName(""); setRole("user"); setShowForm(false); refresh();
+      await createUser({ username, password, display_name: displayName, role, app_access: appAccess });
+      setUsername(""); setPassword(""); setDisplayName(""); setRole("user"); setAppAccess({ scraper: true, universe: false }); setShowForm(false); refresh();
     } catch (reason) { setError(errorText(reason)); }
   };
 
-  const changeAccount = async (account: User, data: { role?: User["role"]; is_active?: boolean }) => {
+  const changeAccount = async (account: User, data: { role?: User["role"]; is_active?: boolean; app_access?: User["app_access"] }) => {
     try { await updateUser(account.id, data); refresh(); } catch (reason) { setError(errorText(reason)); }
   };
 
@@ -232,12 +233,12 @@ function AccountsPage() {
   return (
     <section className="accounts-page">
       <div className="page-heading"><div><p className="eyebrow">GLOBAL ACCESS</p><h1>Accounts</h1><p className="page-intro">One directory for every application in this portal.</p></div><button className="primary-button" onClick={() => setShowForm((visible) => !visible)}>{showForm ? "Cancel" : "＋ New account"}</button></div>
-      {showForm && <form className="create-account" onSubmit={submit}><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} required /></label><label>Password<input type="password" minLength={4} value={password} onChange={(event) => setPassword(event.target.value)} required /></label><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Role<select value={role} onChange={(event) => setRole(event.target.value)}><option value="user">User</option><option value="superadmin">Superadmin</option></select></label><button className="primary-button">Create account <span>↗</span></button></form>}
+      {showForm && <form className="create-account" onSubmit={submit}><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} required /></label><label>Password<input type="password" minLength={4} value={password} onChange={(event) => setPassword(event.target.value)} required /></label><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Role<select value={role} onChange={(event) => setRole(event.target.value)}><option value="user">User</option><option value="superadmin">Superadmin</option></select></label><fieldset className="app-access-fields"><legend>Application access</legend><label><input type="checkbox" checked={appAccess.scraper} onChange={(event) => setAppAccess((current) => ({ ...current, scraper: event.target.checked }))} />Scraper</label><label><input type="checkbox" checked={appAccess.universe} onChange={(event) => setAppAccess((current) => ({ ...current, universe: event.target.checked }))} />Universe</label></fieldset><button className="primary-button">Create account <span>↗</span></button></form>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="directory-toolbar"><span>{users.length} {users.length === 1 ? "account" : "accounts"}</span><label className="search-field"><span>⌕</span><input aria-label="Search accounts" placeholder="Search directory" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
-      <div className="directory-table-wrap"><table className="directory-table"><thead><tr><th>Account</th><th>Role</th><th>Status</th><th>Last sign in</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
-        {filtered.map((account) => <tr key={account.id}><td><div className="account-name"><span className="avatar">{(account.display_name || account.username).slice(0, 1).toUpperCase()}</span><div><strong>{account.display_name || account.username}</strong><small>@{account.username}</small></div></div></td><td><span className={`role-label ${account.role}`}>{account.role}</span></td><td><span className={`status-label ${account.is_active ? "active" : "inactive"}`}><i />{account.is_active ? "Active" : "Inactive"}</span></td><td className="last-seen">{account.last_login_at ? new Date(account.last_login_at).toLocaleString() : "Never"}</td><td><div className="row-actions"><button onClick={() => changeAccount(account, { is_active: !account.is_active })}>{account.is_active ? "Deactivate" : "Activate"}</button><button onClick={() => changeAccount(account, { role: account.role === "superadmin" ? "user" : "superadmin" })}>{account.role === "superadmin" ? "Make user" : "Make admin"}</button><button className="delete-action" onClick={() => removeAccount(account)}>Delete</button></div></td></tr>)}
-        {filtered.length === 0 && <tr><td className="empty-table" colSpan={5}>No accounts match this search.</td></tr>}
+      <div className="directory-table-wrap"><table className="directory-table"><thead><tr><th>Account</th><th>Role</th><th>Status</th><th>Applications</th><th>Last sign in</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
+        {filtered.map((account) => <tr key={account.id}><td><div className="account-name"><span className="avatar">{(account.display_name || account.username).slice(0, 1).toUpperCase()}</span><div><strong>{account.display_name || account.username}</strong><small>@{account.username}</small></div></div></td><td><span className={`role-label ${account.role}`}>{account.role}</span></td><td><span className={`status-label ${account.is_active ? "active" : "inactive"}`}><i />{account.is_active ? "Active" : "Inactive"}</span></td><td><div className="account-app-access">{(["scraper", "universe"] as const).map((app) => <label key={app}><input type="checkbox" checked={Boolean(account.app_access?.[app])} onChange={(event) => changeAccount(account, { app_access: { ...(account.app_access ?? { scraper: false, universe: false }), [app]: event.target.checked } })} />{app === "scraper" ? "Scraper" : "Universe"}</label>)}</div></td><td className="last-seen">{account.last_login_at ? new Date(account.last_login_at).toLocaleString() : "Never"}</td><td><div className="row-actions"><button onClick={() => changeAccount(account, { is_active: !account.is_active })}>{account.is_active ? "Deactivate" : "Activate"}</button><button onClick={() => changeAccount(account, { role: account.role === "superadmin" ? "user" : "superadmin" })}>{account.role === "superadmin" ? "Make user" : "Make admin"}</button><button className="delete-action" onClick={() => removeAccount(account)}>Delete</button></div></td></tr>)}
+        {filtered.length === 0 && <tr><td className="empty-table" colSpan={6}>No accounts match this search.</td></tr>}
       </tbody></table></div>
     </section>
   );

@@ -180,7 +180,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             column_allowed=False,
             supports_limit=False,
             supports_fresh=False,
-            supports_resume=False,
+            supports_resume=True,
             headed_flag="--headed",
             supports_description=True,
             description_default="A/M: CAPA",

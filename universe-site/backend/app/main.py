@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from . import models
-from .db import Base, ensure_database_schema, engine, migrate_ccc_market_rows, migrate_vin_uniqueness
+from .db import Base, ensure_database_schema, engine, migrate_ccc_market_rows, migrate_user_app_access, migrate_vin_uniqueness
 from .routers import ccc_market, master_data
 
 
@@ -11,6 +11,7 @@ from .routers import ccc_market, master_data
 async def lifespan(_app: FastAPI):
     ensure_database_schema()
     Base.metadata.create_all(engine)
+    migrate_user_app_access()
     migrate_vin_uniqueness()
     migrate_ccc_market_rows()
     yield

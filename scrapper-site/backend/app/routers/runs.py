@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import urllib.request
 from pathlib import Path
+from zipfile import is_zipfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -52,7 +53,7 @@ def run_artifact_path(run: Run, name: str) -> Path | None:
 
 def to_out(run: Run) -> RunOut:
     spec = get_crawler(run.crawler_id)
-    resumable_status = run.status == "stopped" or (
+    resumable_status = run.status in {"stopped", "failed"} or (
         run.crawler_id == "vin-lookup" and run.status in {"failed", "success"}
     )
     out = RunOut.model_validate(run)
@@ -248,8 +249,8 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     if run is None:
         raise HTTPException(404, "Run not found")
     is_vin_terminal_run = run.crawler_id == "vin-lookup" and run.status in {"failed", "success"}
-    if run.status != "stopped" and not is_vin_terminal_run:
-        raise HTTPException(409, "Only stopped runs can be continued")
+    if run.status not in {"stopped", "failed"} and not is_vin_terminal_run:
+        raise HTTPException(409, "Only stopped or failed runs can be continued")
     if runner.active_run_id() == run_id:
         raise HTTPException(409, "The stopped crawler process is still shutting down")
 
@@ -263,8 +264,12 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     input_path = run_artifact_path(run, "input")
     if input_path is None:
         raise HTTPException(409, "The original input workbook is unavailable; this run cannot be continued")
-    if spec.supports_resume and spec.resume_requires_output and run_artifact_path(run, "output") is None:
-        raise HTTPException(409, "No partial output exists to resume; start a new run instead")
+    if spec.supports_resume and spec.resume_requires_output:
+        output_path = run_artifact_path(run, "output")
+        if output_path is None:
+            raise HTTPException(409, "No partial output exists to resume; start a new run instead")
+        if not is_zipfile(output_path):
+            raise HTTPException(409, "The saved partial output is not a valid Excel workbook and cannot be resumed safely; restore a valid output or start a new run")
 
     params["fresh"] = False
     run.params = json.dumps(params)

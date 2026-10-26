@@ -36,6 +36,8 @@ def get_current_user(
     user = db.get(User, int(payload["sub"]))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account disabled or removed")
+    if not (user.app_access or {}).get("scraper", False):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Scraper access is not enabled for this account")
     return user
 
 

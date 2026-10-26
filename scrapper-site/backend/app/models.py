@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .db import Base, engine
@@ -23,6 +23,7 @@ class User(Base):
     display_name = Column(String(100), default="")
     role = Column(String(20), default="user")  # superadmin | user
     is_active = Column(Boolean, default=True)
+    app_access = Column(JSON, nullable=False, default=lambda: {"scraper": True, "universe": False})
     created_at = Column(DateTime(timezone=True), default=utcnow)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
 

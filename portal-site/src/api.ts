@@ -6,6 +6,7 @@ export interface User {
   display_name: string;
   role: "superadmin" | "user";
   is_active: boolean;
+  app_access: { scraper: boolean; universe: boolean };
   created_at: string;
   last_login_at: string | null;
 }
@@ -27,8 +28,8 @@ export const logout = () => client.post("/api/auth/logout");
 export const updateProfile = (data: { display_name?: string; current_password?: string; new_password?: string }) =>
   client.patch<User>("/api/profile", data).then((response) => response.data);
 export const listUsers = () => client.get<User[]>("/api/users").then((response) => response.data);
-export const createUser = (data: { username: string; password: string; display_name: string; role: string }) =>
+export const createUser = (data: { username: string; password: string; display_name: string; role: string; app_access: User["app_access"] }) =>
   client.post<User>("/api/users", data).then((response) => response.data);
-export const updateUser = (id: number, data: Partial<Pick<User, "display_name" | "role" | "is_active">> & { password?: string }) =>
+export const updateUser = (id: number, data: Partial<Pick<User, "display_name" | "role" | "is_active" | "app_access">> & { password?: string }) =>
   client.put<User>(`/api/users/${id}`, data).then((response) => response.data);
 export const deleteUser = (id: number) => client.delete(`/api/users/${id}`);

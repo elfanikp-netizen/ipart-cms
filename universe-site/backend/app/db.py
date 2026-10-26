@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -112,6 +114,28 @@ def migrate_ccc_market_rows() -> None:
                 f"ALTER TABLE {table} ADD CONSTRAINT uq_ccc_market_oem_vin_date_index "
                 "UNIQUE (oem, vin, crawl_date, market_index)"
             ))
+
+
+def migrate_user_app_access() -> None:
+    schema = "global" if engine.dialect.name == "postgresql" else None
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names(schema=schema):
+        return
+    columns = {column["name"] for column in inspector.get_columns("users", schema=schema)}
+    preparer = engine.dialect.identifier_preparer
+    table = f"{preparer.quote_schema(schema)}.{preparer.quote('users')}" if schema else preparer.quote("users")
+    with engine.begin() as connection:
+        if "app_access" not in columns:
+            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN app_access JSON"))
+        rows = connection.execute(text(f"SELECT id, role FROM {table} WHERE app_access IS NULL")).all()
+        for user_id, role in rows:
+            access = {"scraper": True, "universe": role == "superadmin"}
+            if engine.dialect.name == "postgresql":
+                connection.execute(text(f"UPDATE {table} SET app_access = CAST(:access AS JSON) WHERE id = :id"),
+                                   {"access": json.dumps(access), "id": user_id})
+            else:
+                connection.execute(text(f"UPDATE {table} SET app_access = :access WHERE id = :id"),
+                                   {"access": json.dumps(access), "id": user_id})
 
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
