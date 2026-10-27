@@ -21,8 +21,10 @@ export default function RunningVpnWarning() {
       try {
         const [queue, runs] = await Promise.all([queueStatus(), listRuns()]);
         if (cancelled) return;
-        const runId = queue.active_run_id;
-        const active = runId !== null && runs.some((run) => run.id === runId && run.status === "running");
+        const runId = queue.active_run_ids.find((id) =>
+          runs.some((run) => run.id === id && run.status === "running")
+        ) ?? null;
+        const active = runId !== null;
         setActiveRunId(active ? runId : null);
         if (!active) setDismissedRunId(null);
       } catch {

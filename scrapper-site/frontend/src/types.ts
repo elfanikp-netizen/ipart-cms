@@ -59,6 +59,7 @@ export interface Run {
 export interface QueueStatus {
   queued: number;
   active_run_id: number | null;
+  active_run_ids: number[];
 }
 
 export interface NetworkStatus {

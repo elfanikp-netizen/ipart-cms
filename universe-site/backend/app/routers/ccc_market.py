@@ -220,6 +220,11 @@ def lowest_price_rows(db: Session, from_date: date | None, to_date: date | None)
             vendor_prices: dict[str, Decimal] = {}
             for _, vendor, price in description_offers:
                 vendor_prices[vendor] = min(vendor_prices.get(vendor, price), price)
+            second_lowest = min((price for price in vendor_prices.values() if price > lowest), default=None)
+            lowest_vendors = sorted(vendor for vendor, price in vendor_prices.items() if price == lowest)
+            second_lowest_vendors = sorted(
+                vendor for vendor, price in vendor_prices.items() if second_lowest is not None and price == second_lowest
+            )
             for vendor, price in vendor_prices.items():
                 result.append({
                     "oem": crawl_key[0],
@@ -228,6 +233,10 @@ def lowest_price_rows(db: Session, from_date: date | None, to_date: date | None)
                     "vendor": vendor,
                     "description": description_label,
                     "price": price,
+                    "lowest_price": lowest,
+                    "lowest_vendors": ", ".join(lowest_vendors),
+                    "second_lowest_price": second_lowest,
+                    "second_lowest_vendors": ", ".join(second_lowest_vendors),
                     "outcome": "won" if price == lowest else "lost",
                 })
     return result
@@ -270,7 +279,10 @@ def ccc_lowest_price_summary(
             description_losses[description_key].add(crawl_key)
 
     vendors = []
-    for vendor in sorted(vendor_oems, key=lambda item: (-len(vendor_wins[item]), item.casefold())):
+    for vendor in sorted(
+        vendor_oems,
+        key=lambda item: ("ipart" not in item.casefold(), -len(vendor_wins[item]), item.casefold()),
+    ):
         description_keys = {key[1] for key in vendor_descriptions if key[0] == vendor}
         descriptions = []
         for description_key in description_keys:
@@ -330,7 +342,12 @@ def ccc_lowest_price_details(
                 item.update(row)
                 item["crawl_count"] = by_oem[row["oem"]]["crawl_count"]
         rows = sorted(by_oem.values(), key=lambda row: (row["oem"], row["vin"]))
-    return [{**row, "price": str(row["price"])} for row in rows]
+    return [{
+        **row,
+        "price": str(row["price"]),
+        "lowest_price": str(row["lowest_price"]),
+        "second_lowest_price": str(row["second_lowest_price"]) if row["second_lowest_price"] is not None else None,
+    } for row in rows]
 
 
 @router.get("/lowest-price/export")
@@ -347,10 +364,10 @@ def export_ccc_lowest_price_details(
     rows = ccc_lowest_price_details(vendor, description, outcome, metric, from_date, to_date, db)
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Lowest Price")
-    sheet.append(["OEM", "VIN", "Crawl Date", "Vendor", "Description", "Outcome", "Price", "Crawls per OEM"])
+    sheet.append(["OEM", "VIN", "Crawl Date", "Vendor", "Description", "Outcome", "Price", "Lowest Vendor(s)", "Lowest Price", "Second Lowest Vendor(s)", "Second Lowest Price", "Crawls per OEM"])
     for row in rows:
         crawl_date = row["crawl_date"].replace(tzinfo=None) if row["crawl_date"].tzinfo else row["crawl_date"]
-        sheet.append([row["oem"], row["vin"], crawl_date, row["vendor"], row["description"], row["outcome"], row["price"], row.get("crawl_count", 1)])
+        sheet.append([row["oem"], row["vin"], crawl_date, row["vendor"], row["description"], row["outcome"], row["price"], row["lowest_vendors"], row["lowest_price"], row["second_lowest_vendors"], row["second_lowest_price"], row.get("crawl_count", 1)])
     stream = BytesIO()
     workbook.save(stream)
     workbook.close()
@@ -373,9 +390,13 @@ def import_ccc_market_records(
     created = updated = skipped = 0
     errors: list[str] = []
     try:
-        indexes = excel_indexes(headers, ("VIN", "OEM", "date_time", "market_data"))
+        indexes = excel_indexes(headers, ("VIN", "OEM", "Status", "date_time", "market_data"))
         for row_number, row in enumerate(rows, start=2):
             try:
+                status = str(get_cell(row, indexes["Status"]) or "").strip()
+                if status.casefold() != "ok":
+                    skipped += 1
+                    continue
                 oem = str(get_cell(row, indexes["OEM"]) or "").strip().upper()
                 vin = str(get_cell(row, indexes["VIN"]) or "").strip().upper()
                 if not oem or not vin:

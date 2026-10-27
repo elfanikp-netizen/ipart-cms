@@ -115,6 +115,10 @@ export interface CccLowestPriceDetail {
   vendor: string;
   description: string;
   price: string;
+  lowest_price: string;
+  lowest_vendors: string;
+  second_lowest_price: string | null;
+  second_lowest_vendors: string;
   outcome: "won" | "lost";
   crawl_count?: number;
 }

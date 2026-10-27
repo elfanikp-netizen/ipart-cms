@@ -83,3 +83,4 @@ class RunOut(BaseModel):
 class QueueOut(BaseModel):
     queued: int
     active_run_id: int | None
+    active_run_ids: list[int]

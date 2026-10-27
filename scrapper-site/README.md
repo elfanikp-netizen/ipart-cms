@@ -1,8 +1,9 @@
 # Scraper CMS
 
-Scraper CMS launches the existing crawler scripts as subprocesses; the crawler
-projects themselves are not modified. Upload an Excel file, queue a run, follow
-its progress and log, and download the result when available.
+Scraper CMS launches isolated copies of the existing crawler scripts as
+subprocesses; the crawler projects themselves are not modified. Upload an
+Excel file, start a run, follow its progress and log, and download the result
+when available.
 
 For platform-wide setup, the Portal Apps architecture, shared authentication,
 database schema, and full local startup instructions, see the
@@ -51,11 +52,13 @@ accounts, or profile settings.
 
 ## Run behavior
 
-Runs execute one at a time so persistent Chrome profiles and CDP ports do not
-collide. Each run has a directory under `data/runs/<id>/` containing its input,
-live `run.log`, and output workbook when produced. The API resolves older
-absolute artifact paths against the current configured data directory so runs
-created before moving the workspace can still show logs and downloads.
+Runs from the same crawler project can execute concurrently. Each run gets an
+isolated workspace under `data/runs/<id>/workspace/`, including its own copy of
+the crawler script, browser profile, and a unique Chrome DevTools port. The run
+directory also contains its input, live `run.log`, and output workbook when
+produced. The API resolves older absolute artifact paths against the current
+configured data directory so runs created before moving the workspace can still
+show logs and downloads.
 
 CARiD and brand crawlers may open a visible Chrome window. If a Cloudflare or
 human-verification check appears, the run is marked as waiting in the UI. Open
@@ -94,10 +97,10 @@ issued by the Portal API. It exposes crawler and run operations only:
 |---|---|
 | `GET /api/health` | Scraper API health |
 | `GET /api/crawlers` | List registered crawlers, sites, and capabilities |
-| `POST /api/runs` | Queue a run with multipart crawler options and an Excel file |
+| `POST /api/runs` | Start a run with multipart crawler options and an Excel file |
 | `GET /api/runs` / `GET /api/runs/{id}` | List and inspect runs |
 | `GET /api/runs/{id}/log?tail=300` | Read a run log tail |
 | `POST /api/runs/{id}/stop` | Stop a queued or running process tree |
 | `GET /api/runs/{id}/output` | Download a run output workbook |
-| `GET /api/queue` | Read current queue status |
+| `GET /api/queue` | Read the number of waiting runs and IDs of all active runs |
 | `GET /api/network-status` | Estimate host VPN status |

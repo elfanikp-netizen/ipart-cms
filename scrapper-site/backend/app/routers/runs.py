@@ -78,7 +78,11 @@ def list_crawlers(_: User = Depends(get_current_user)):
 
 @router.get("/queue", response_model=QueueOut)
 def queue_status(_: User = Depends(get_current_user)):
-    return QueueOut(queued=runner.queue_size(), active_run_id=runner.active_run_id())
+    return QueueOut(
+        queued=runner.queue_size(),
+        active_run_id=runner.active_run_id(),
+        active_run_ids=runner.active_run_ids(),
+    )
 
 
 @router.get("/network-status")
@@ -229,7 +233,7 @@ def stop_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(ge
     if not run:
         raise HTTPException(404, "Run not found")
     if run.status == "queued":
-        # Not started yet — the runner will skip it when dequeued
+        runner.cancel_pending(run.id)
         run.status = "stopped"
         db.commit()
         log_activity(db, user, "stop_run", f"stopped run #{run.id} (queued)")

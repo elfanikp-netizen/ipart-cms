@@ -226,7 +226,7 @@ export default function DashboardPage() {
           {selected?.notes && <p className="notes">ℹ️ {selected.notes}</p>}
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={submitting || !file || !selected}>
-            {submitting ? "Uploading…" : "▶ Queue run"}
+            {submitting ? "Uploading…" : "▶ Start run"}
           </button>
         </form>
       </section>
@@ -250,7 +250,7 @@ export default function DashboardPage() {
             <div className="dialog-actions">
               <button type="button" className="secondary" onClick={() => setShowVpnWarning(false)}>Cancel</button>
               <button type="button" onClick={() => void queueRun()} disabled={submitting}>
-                {submitting ? "Queueing…" : "Continue without VPN"}
+                {submitting ? "Starting…" : "Continue without VPN"}
               </button>
             </div>
           </section>
@@ -260,9 +260,9 @@ export default function DashboardPage() {
       <section className="card">
         <h1>
           Runs{" "}
-          {queue && (queue.queued > 0 || queue.active_run_id) && (
+          {queue && (queue.queued > 0 || queue.active_run_ids.length > 0) && (
             <span className="queue-info">
-              (active: {queue.active_run_id ?? "—"}, queued: {queue.queued})
+              (running: {queue.active_run_ids.length}, waiting: {queue.queued})
             </span>
           )}
         </h1>
