@@ -60,7 +60,22 @@ with `vehicle` and `vin` tables. VIN rows reference vehicles through
 
 ## Start Locally
 
-Run each command in a separate PowerShell terminal:
+To start all six services in separate PowerShell windows, run:
+
+```powershell
+cd C:\ELFANI\portal-apps
+.\start_all.ps1
+```
+
+To stop the launched services and any listeners on their app ports, run:
+
+```powershell
+cd C:\ELFANI\portal-apps
+.\stop_all.ps1
+```
+
+The stop script targets ports 8000-8002 and 5173-5175. Services can also be
+started individually in separate PowerShell terminals:
 
 ```powershell
 # Portal identity API

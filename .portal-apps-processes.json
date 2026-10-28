@@ -1,0 +1,27 @@
+﻿[
+    {
+        "Name":  "Portal API",
+        "Port":  8001,
+        "ProcessId":  20516
+    },
+    {
+        "Name":  "Scraper API",
+        "Port":  8000,
+        "ProcessId":  30656
+    },
+    {
+        "Name":  "Scraper UI",
+        "Port":  5173,
+        "ProcessId":  32984
+    },
+    {
+        "Name":  "Portal UI",
+        "Port":  5174,
+        "ProcessId":  46756
+    },
+    {
+        "Name":  "Universe UI",
+        "Port":  5175,
+        "ProcessId":  24012
+    }
+]
