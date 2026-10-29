@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Run, RunLog } from "../types";
-import { continueRun, errorText, getRun, getRunLog, client, stopRun } from "../api";
+import { continueRun, errorText, getRun, getRunLog, client, setBrowserVisibility, stopRun } from "../api";
 import ProgressBar from "../components/ProgressBar";
 
 export default function RunDetailPage() {
@@ -13,8 +13,11 @@ export default function RunDetailPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [continueError, setContinueError] = useState<string | null>(null);
   const [continuing, setContinuing] = useState(false);
+  const [browserVisible, setBrowserVisible] = useState(false);
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
   const [pollVersion, setPollVersion] = useState(0);
   const logRef = useRef<HTMLPreElement>(null);
+  const visibilityInitialized = useRef(false);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -22,6 +25,13 @@ export default function RunDetailPage() {
       try {
         const [r, l] = await Promise.all([getRun(runId), getRunLog(runId)]);
         setRun(r);
+        if (!visibilityInitialized.current) {
+          setBrowserVisible(JSON.parse(r.params || "{}").show === true);
+          visibilityInitialized.current = true;
+        }
+        if (r.browser_visible !== null && r.browser_visible !== undefined) {
+          setBrowserVisible(r.browser_visible);
+        }
         setLog(l);
         if (r.status === "queued" || r.status === "running") {
           timer = window.setTimeout(load, 2000);
@@ -45,6 +55,10 @@ export default function RunDetailPage() {
   if (!run) return <p>Loading…</p>;
 
   const active = run.status === "queued" || run.status === "running";
+  const progressComplete = run.progress_total !== null
+    && run.progress_total > 0
+    && (run.progress_done ?? 0) >= run.progress_total;
+  const canStop = active && !progressComplete;
   let params: Record<string, unknown> = {};
   try {
     params = JSON.parse(run.params || "{}");
@@ -83,6 +97,19 @@ export default function RunDetailPage() {
     }
   };
 
+  const toggleBrowserVisibility = async () => {
+    setVisibilityBusy(true);
+    try {
+      const updatedRun = await setBrowserVisibility(run.id, !browserVisible);
+      setRun(updatedRun);
+      setBrowserVisible(updatedRun.browser_visible ?? !browserVisible);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setVisibilityBusy(false);
+    }
+  };
+
   return (
     <section>
       <p><Link to="/">← Back to dashboard</Link></p>
@@ -104,12 +131,17 @@ export default function RunDetailPage() {
       <ProgressBar run={run} />
 
       <div className="actions-bar">
-        {active && (
+        {run.can_manage && run.status === "running" && run.supports_live_visibility && (
+          <button type="button" onClick={() => void toggleBrowserVisibility()} disabled={visibilityBusy}>
+            {visibilityBusy ? "Updating browser…" : browserVisible ? "Hide browser" : "Show browser"}
+          </button>
+        )}
+        {run.can_manage && canStop && (
           <button className="danger" onClick={() => stopRun(run.id).then(setRun)}>
             ■ Stop run
           </button>
         )}
-        {run.can_continue && (
+        {run.can_manage && run.can_continue && (
           <button
             onClick={() => void resumeRun()}
             disabled={!run.can_continue || continuing}
@@ -118,7 +150,7 @@ export default function RunDetailPage() {
             {continuing ? "Continuing…" : "↻ Continue run"}
           </button>
         )}
-        {run.has_output && (
+        {run.can_manage && run.has_output && (
           <button onClick={() => void downloadOutput()}>⬇ Download output Excel</button>
         )}
       </div>

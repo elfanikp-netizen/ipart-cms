@@ -11,6 +11,23 @@ export interface User {
   last_login_at: string | null;
 }
 
+export interface Activity {
+  id: number;
+  user_id: number | null;
+  username: string;
+  action: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface ActivityPage {
+  items: Activity[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
 export const client = axios.create({ withCredentials: true });
 
 export function errorText(error: unknown): string {
@@ -33,3 +50,5 @@ export const createUser = (data: { username: string; password: string; display_n
 export const updateUser = (id: number, data: Partial<Pick<User, "display_name" | "role" | "is_active" | "app_access">> & { password?: string }) =>
   client.put<User>(`/api/users/${id}`, data).then((response) => response.data);
 export const deleteUser = (id: number) => client.delete(`/api/users/${id}`);
+export const listActivityPage = (params: { page: number; page_size: number; search: string; username: string }) =>
+  client.get<ActivityPage>("/api/activity/page", { params }).then((response) => response.data);

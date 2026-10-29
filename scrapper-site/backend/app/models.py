@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import foreign, relationship
 
 from .db import Base, engine
 
 IDENTITY_SCHEMA = "global" if engine.dialect.name == "postgresql" else None
+APP_SCHEMA = "scrapping" if engine.dialect.name == "postgresql" else None
 IDENTITY_USER_TABLE = "global.users" if IDENTITY_SCHEMA else "users"
 
 
@@ -27,21 +28,24 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
 
-    activities = relationship("Activity", back_populates="user", cascade="all, delete-orphan")
     runs = relationship("Run", back_populates="user")
 
 
 class Activity(Base):
-    __tablename__ = "activities"
-    __table_args__ = {"schema": IDENTITY_SCHEMA} if IDENTITY_SCHEMA else {}
+    __tablename__ = "activities" if APP_SCHEMA else "scraper_activities"
+    __table_args__ = {"schema": APP_SCHEMA} if APP_SCHEMA else {}
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(ForeignKey(f"{IDENTITY_USER_TABLE}.id"), nullable=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
     action = Column(String(30), nullable=False)   # login | create_run | stop_run | continue_run | account/profile changes
     detail = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    user = relationship("User", back_populates="activities")
+    user = relationship(
+        "User",
+        primaryjoin=lambda: foreign(Activity.user_id) == User.id,
+        viewonly=True,
+    )
 
 
 class Run(Base):

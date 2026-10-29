@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import PortalUser, get_current_user, get_db
+from ..audit import log_activity
 from ..models import CccMarketRecord
 from ..schemas import CccMarketPageOut, CccMarketRecordOut
 from .master_data import excel_indexes, get_cell, open_excel
@@ -359,7 +360,7 @@ def export_ccc_lowest_price_details(
     from_date: date | None = None,
     to_date: date | None = None,
     db: Session = Depends(get_db),
-    _: PortalUser = Depends(get_current_user),
+    user: PortalUser = Depends(get_current_user),
 ):
     rows = ccc_lowest_price_details(vendor, description, outcome, metric, from_date, to_date, db)
     workbook = Workbook(write_only=True)
@@ -368,6 +369,7 @@ def export_ccc_lowest_price_details(
     for row in rows:
         crawl_date = row["crawl_date"].replace(tzinfo=None) if row["crawl_date"].tzinfo else row["crawl_date"]
         sheet.append([row["oem"], row["vin"], crawl_date, row["vendor"], row["description"], row["outcome"], row["price"], row["lowest_vendors"], row["lowest_price"], row["second_lowest_vendors"], row["second_lowest_price"], row.get("crawl_count", 1)])
+    log_activity(db, user, "export_ccc_lowest_price_details", f"exported {len(rows)} CCC market detail rows")
     stream = BytesIO()
     workbook.save(stream)
     workbook.close()
@@ -444,4 +446,5 @@ def import_ccc_market_records(
         raise HTTPException(409, "Import conflicted with an existing CCC market key") from error
     finally:
         workbook.close()
+    log_activity(db, user, "import_ccc_market", f"created={created} updated={updated} skipped={skipped}")
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}

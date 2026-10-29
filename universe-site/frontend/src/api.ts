@@ -260,3 +260,24 @@ export async function downloadVinExportByVehicleList(file: File) {
   const response = await client.post<Blob>("/api/universe/vins/export-by-vehicle-list", form, { responseType: "blob" });
   saveBlob(response.data, "vins-by-vehicle-list.xlsx");
 }
+
+export interface Activity {
+  id: number;
+  user_id: number | null;
+  username: string;
+  action: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface ActivityPage {
+  items: Activity[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export async function getUniverseActivity(params: { page: number; page_size: number; search: string; username?: string }) {
+  return (await client.get<ActivityPage>("/api/universe/activity", { params })).data;
+}

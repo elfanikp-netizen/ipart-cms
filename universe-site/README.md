@@ -116,6 +116,11 @@ All routes are under `/api/universe` and require a valid Portal session:
 | `GET /market/ccc` | Filter and page CCC market data, newest crawl first |
 | `GET /market/ccc/filters` | List distinct CCC OEM, VIN, description, and vendor filters |
 | `POST /market/ccc/import` | Import or replace CCC market data from Excel |
+| `GET /activity` | Search and paginate Universe-only activity |
+
+Universe activity is stored in PostgreSQL schema `universe` and records vehicle,
+VIN, CCC import, and export actions. Portal account activity remains in `global`;
+Scraper run activity is stored in `scrapping`.
 
 ## Development
 

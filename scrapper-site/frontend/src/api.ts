@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Activity, Crawler, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
+import type { Activity, ActivityPage, Crawler, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
 
 // Same-origin by default: the Vite dev proxy (and any reverse proxy like ngrok)
 // forwards /api to the backend, so the UI works over the tunnel URL too.
@@ -49,6 +49,7 @@ export const updateProfile = (data: {
 
 // ---------------------------------------------------------------- users (superadmin)
 export const listUsers = () => client.get<User[]>("/api/users").then((r) => r.data);
+export const listActivityUsers = () => client.get<Array<Pick<User, "id" | "username">>>("/api/activity/users").then((r) => r.data);
 export const createUser = (data: { username: string; password: string; display_name?: string; role?: string }) =>
   client.post<User>("/api/users", data).then((r) => r.data);
 export const updateUser = (id: number, data: Partial<{ password: string; display_name: string; role: string; is_active: boolean }>) =>
@@ -62,6 +63,8 @@ export const listActivity = (limit = 100, q = "", username = "") => {
   if (username) params.set("username", username);
   return client.get<Activity[]>(`/api/activity?${params}`).then((r) => r.data);
 };
+export const listActivityPage = (params: { page: number; page_size: number; search: string; username: string }) =>
+  client.get<ActivityPage>("/api/activity/page", { params }).then((r) => r.data);
 export const listUserActivity = (userId: number, limit = 100) =>
   client.get<Activity[]>(`/api/users/${userId}/activity?limit=${limit}`).then((r) => r.data);
 
@@ -73,6 +76,8 @@ export const getRunLog = (id: number) => client.get<RunLog>(`/api/runs/${id}/log
 export const queueStatus = () => client.get<QueueStatus>("/api/queue").then((r) => r.data);
 export const getNetworkStatus = () => client.get<NetworkStatus>("/api/network-status").then((r) => r.data);
 export const stopRun = (id: number) => client.post<Run>(`/api/runs/${id}/stop`).then((r) => r.data);
+export const setBrowserVisibility = (id: number, visible: boolean) =>
+  client.post<Run>(`/api/runs/${id}/browser-visibility`, new URLSearchParams({ visible: String(visible) })).then((r) => r.data);
 export const continueRun = (id: number) => client.post<Run>(`/api/runs/${id}/continue`).then((r) => r.data);
 
 export const outputUrl = (id: number) => `${API}/api/runs/${id}/output`;

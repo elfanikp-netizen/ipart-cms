@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+import math
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..deps import get_current_user, get_db, log_activity, require_superadmin
 from ..models import Activity, User
-from ..schemas import ActivityOut, ProfileUpdate, UserCreate, UserOut, UserUpdate
+from ..schemas import ActivityOut, ActivityPageOut, ProfileUpdate, UserCreate, UserOut, UserUpdate
 from ..security import hash_password, verify_password
 
 router = APIRouter(prefix="/api", tags=["users", "activity"])
@@ -147,10 +149,10 @@ def all_activity(
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
-    stmt = select(Activity).order_by(Activity.id.desc())
+    stmt = select(Activity).where(Activity.action.notin_(("create_run", "stop_run", "continue_run"))).order_by(Activity.id.desc())
     if me.role == "superadmin":
         if username.strip():
-            stmt = stmt.join(User, Activity.user_id == User.id, isouter=True).where(User.username == username.strip())
+            stmt = stmt.where(Activity.user.has(User.username == username.strip()))
     else:
         stmt = stmt.where(Activity.user_id == me.id)
     if q.strip():
@@ -159,9 +161,48 @@ def all_activity(
     return [to_activity_out(activity) for activity in db.scalars(stmt.limit(limit)).all()]
 
 
+@router.get("/activity/page", response_model=ActivityPageOut)
+def activity_page(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    search: str = "",
+    username: str = "",
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    stmt = select(Activity).where(Activity.action.notin_(("create_run", "stop_run", "continue_run")))
+    if me.role == "superadmin":
+        if username.strip():
+            stmt = stmt.where(Activity.user.has(User.username == username.strip()))
+    else:
+        stmt = stmt.where(Activity.user_id == me.id)
+    if search.strip():
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(Activity.action.ilike(like), Activity.detail.ilike(like), Activity.user.has(User.username.ilike(like)))
+        )
+    count = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    rows = db.scalars(stmt.order_by(Activity.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+    return {
+        "items": [to_activity_out(activity) for activity in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": count,
+        "pages": math.ceil(count / page_size) if count else 0,
+    }
+
+
 @router.get("/users/{user_id}/activity", response_model=list[ActivityOut])
 def user_activity(user_id: int, limit: int = 100, db: Session = Depends(get_db), me: User = Depends(get_current_user)):
     if me.role != "superadmin" and me.id != user_id:
         raise HTTPException(403, "You can only view your own activity")
-    rows = db.scalars(select(Activity).where(Activity.user_id == user_id).order_by(Activity.id.desc()).limit(limit)).all()
+    rows = db.scalars(
+        select(Activity)
+        .where(
+            Activity.user_id == user_id,
+            Activity.action.notin_(("create_run", "stop_run", "continue_run")),
+        )
+        .order_by(Activity.id.desc())
+        .limit(limit)
+    ).all()
     return [to_activity_out(activity) for activity in rows]

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import PortalUser, get_current_user, get_db
+from ..audit import log_activity
 from ..models import Vehicle, Vin
 from ..schemas import ImportOut, VehicleCreate, VehicleOut, VehicleUpdate, VinCreate, VinOut, VinUpdate
 
@@ -214,6 +215,7 @@ def create_vehicle(payload: VehicleCreate, db: Session = Depends(get_db), user: 
         db.rollback()
         raise HTTPException(409, "A vehicle with this Year, Make, and Model already exists") from error
     db.refresh(vehicle)
+    log_activity(db, user, "create_vehicle", f"created {vehicle.year} {vehicle.make} {vehicle.model}")
     return VehicleOut.model_validate(vehicle)
 
 
@@ -240,16 +242,19 @@ def update_vehicle(vehicle_id: int, payload: VehicleUpdate, db: Session = Depend
         db.rollback()
         raise HTTPException(409, "A vehicle with this Year, Make, and Model already exists") from error
     db.refresh(vehicle)
+    log_activity(db, user, "update_vehicle", f"updated {vehicle.year} {vehicle.make} {vehicle.model}")
     return VehicleOut.model_validate(vehicle)
 
 
 @router.delete("/vehicles/{vehicle_id}", status_code=204)
-def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), _: PortalUser = Depends(get_current_user)):
+def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
     vehicle = db.get(Vehicle, vehicle_id)
     if vehicle is None:
         raise HTTPException(404, "Vehicle not found")
+    detail = f"deleted {vehicle.year} {vehicle.make} {vehicle.model}"
     db.delete(vehicle)
     db.commit()
+    log_activity(db, user, "delete_vehicle", detail)
 
 
 @router.get("/vehicles/export")
@@ -263,6 +268,7 @@ def export_vehicles(
     sheet.append(["Year", "Make", "Model"])
     for vehicle in rows:
         sheet.append([vehicle.year, vehicle.make, vehicle.model])
+    log_activity(db, _, "export_vehicles", f"exported {len(rows)} vehicle records")
     return excel_response(workbook, "vehicles.xlsx")
 
 
@@ -287,6 +293,7 @@ def import_vehicles(file: UploadFile = File(...), db: Session = Depends(get_db),
                 if len(result.errors) < 50:
                     result.errors.append(f"Row {row_number}: {error}")
         db.commit()
+        log_activity(db, user, "import_vehicles", f"created={result.created} updated={result.updated} skipped={result.skipped}")
     except IntegrityError as error:
         db.rollback()
         raise HTTPException(409, "Import conflicted with a duplicate vehicle") from error
@@ -327,6 +334,7 @@ def create_vin(payload: VinCreate, db: Session = Depends(get_db), user: PortalUs
         db.rollback()
         raise HTTPException(409, "This VIN already exists for the selected vehicle") from error
     db.refresh(item)
+    log_activity(db, user, "create_vin", f"created VIN {item.vin}")
     return item
 
 
@@ -350,16 +358,19 @@ def update_vin(vin_id: int, payload: VinUpdate, db: Session = Depends(get_db), u
         db.rollback()
         raise HTTPException(409, "This VIN already exists for the selected vehicle") from error
     db.refresh(item)
+    log_activity(db, user, "update_vin", f"updated VIN {item.vin}")
     return item
 
 
 @router.delete("/vins/{vin_id}", status_code=204)
-def delete_vin(vin_id: int, db: Session = Depends(get_db), _: PortalUser = Depends(get_current_user)):
+def delete_vin(vin_id: int, db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
     item = db.get(Vin, vin_id)
     if item is None:
         raise HTTPException(404, "VIN not found")
+    detail = f"deleted VIN {item.vin}"
     db.delete(item)
     db.commit()
+    log_activity(db, user, "delete_vin", detail)
 
 
 @router.get("/vins/export")
@@ -377,6 +388,7 @@ def export_vins(
     sheet.append(["Year", "Make", "Model", "VIN"])
     for item in rows:
         sheet.append([item.vehicle.year, item.vehicle.make, item.vehicle.model, item.vin])
+    log_activity(db, _, "export_vins", f"exported {len(rows)} VIN records")
     return excel_response(workbook, "vins.xlsx")
 
 
@@ -384,7 +396,7 @@ def export_vins(
 def export_vins_by_vehicle_list(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: PortalUser = Depends(get_current_user),
+    user: PortalUser = Depends(get_current_user),
 ):
     workbook, rows, headers = open_excel(file)
     try:
@@ -419,6 +431,7 @@ def export_vins_by_vehicle_list(
     sheet.append(["Year", "Make", "Model", "VIN"])
     for item in matched_vins:
         sheet.append([item.vehicle.year, item.vehicle.make, item.vehicle.model, item.vin])
+    log_activity(db, user, "export_vins_by_vehicle_list", f"exported {len(matched_vins)} VIN records")
     return excel_response(workbook_out, "vins-by-vehicle-list.xlsx")
 
 
@@ -469,4 +482,11 @@ def import_vins(file: UploadFile = File(...), db: Session = Depends(get_db), use
         raise HTTPException(409, "Import conflicted with a duplicate VIN") from error
     finally:
         workbook.close()
+    log_activity(
+        db,
+        user,
+        "import_vins",
+        f"vehicles_created={result.vehicles_created} vehicles_updated={result.vehicles_updated} "
+        f"created={result.created} updated={result.updated} skipped={result.skipped}",
+    )
     return result

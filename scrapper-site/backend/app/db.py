@@ -29,9 +29,11 @@ def _set_sqlite_pragma(dbapi_conn, _):
 def ensure_database_schema() -> None:
     if engine.dialect.name == "postgresql":
         schema = engine.dialect.identifier_preparer.quote_schema(settings.database_schema)
+        scrapping_schema = engine.dialect.identifier_preparer.quote_schema("scrapping")
         identity_schema = engine.dialect.identifier_preparer.quote_schema("global")
         with engine.begin() as connection:
             connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {scrapping_schema}"))
             connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {identity_schema}"))
             connection.execute(text(f"SET search_path TO {schema}, {identity_schema}, public"))
 

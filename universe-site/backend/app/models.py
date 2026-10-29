@@ -77,3 +77,14 @@ class CccMarketRecord(Base):
     market_data = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class Activity(Base):
+    __tablename__ = "activities" if APP_SCHEMA else "universe_activities"
+    __table_args__ = {"schema": APP_SCHEMA} if APP_SCHEMA else {}
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    action = Column(String(50), nullable=False)
+    detail = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)

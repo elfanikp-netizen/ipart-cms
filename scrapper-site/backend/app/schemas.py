@@ -57,10 +57,19 @@ class ActivityOut(BaseModel):
     created_at: datetime
 
 
+class ActivityPageOut(BaseModel):
+    items: list[ActivityOut]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+
 class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    user_id: int | None
     crawler_id: str
     crawler_name: str = ""
     status: str
@@ -74,6 +83,9 @@ class RunOut(BaseModel):
     has_output: bool = False
     can_continue: bool = False
     supports_resume: bool = False
+    can_manage: bool = False
+    supports_live_visibility: bool = False
+    browser_visible: bool | None = None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

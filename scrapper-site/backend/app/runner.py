@@ -24,7 +24,11 @@ WAIT_MARKERS = (
     "security verification",
     "cloudflare",
 )
-CLEAR_MARKERS = ("cleared; continuing", "cleared;continuing", "verification passed")
+CLEAR_MARKERS = (
+    "cleared; continuing",
+    "cleared;continuing",
+    "verification passed",
+)
 
 # Progress markers emitted by the crawler scripts:
 #   carid / keystone / brands:  "[3/50] PN123 ..."
@@ -46,6 +50,8 @@ def _parse_progress(line: str) -> tuple[int, int] | None:
 class Runner:
     def __init__(self) -> None:
         self._procs: dict[int, subprocess.Popen] = {}
+        self._stop_requested: set[int] = set()
+        self._browser_visibility: dict[int, bool] = {}
         self._pending: set[int] = set()
         self._reserved_ports: set[int] = set()
         self._lock = threading.Lock()
@@ -88,17 +94,121 @@ class Runner:
         with self._lock:
             return list(self._procs)
 
-    def stop(self, run_id: int) -> bool:
+    def browser_is_visible(self, run_id: int) -> bool | None:
+        with self._lock:
+            return self._browser_visibility.get(run_id)
+
+    def stop(self, run_id: int, pid: int | None = None) -> bool:
         """Kill the process tree of an active run (taskkill /T also kills its Chrome)."""
+        with self._lock:
+            self._stop_requested.add(run_id)
+            proc = self._procs.get(run_id)
+            target_pid = proc.pid if proc is not None else pid
+            if proc is not None and proc.poll() is not None:
+                self._stop_requested.discard(run_id)
+                return True
+        if target_pid is None:
+            return True
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(target_pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            except (OSError, subprocess.SubprocessError):
+                result = None
+            if result is not None and result.returncode == 0:
+                if proc is None:
+                    return True
+            elif proc is None:
+                try:
+                    check = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {target_pid}", "/NH"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    return False
+                if str(target_pid) not in check.stdout:
+                    return True
+                return False
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    return False
+        return proc is None or proc.poll() is not None
+
+    def set_browser_visibility(self, run_id: int, visible: bool) -> bool:
+        if os.name != "nt":
+            return False
         with self._lock:
             proc = self._procs.get(run_id)
         if proc is None or proc.poll() is not None:
             return False
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            capture_output=True,
-        )
-        return True
+        script = rf'''
+$root = {proc.pid}
+$show = ${str(visible).lower()}
+$all = Get-CimInstance Win32_Process
+$ids = [System.Collections.Generic.HashSet[int]]::new()
+$null = $ids.Add([int]$root)
+$changed = $true
+while ($changed) {{
+    $changed = $false
+    foreach ($item in $all) {{
+        if ($ids.Contains([int]$item.ParentProcessId) -and $ids.Add([int]$item.ProcessId)) {{ $changed = $true }}
+    }}
+}}
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ScraperWindowControl{run_id} {{
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr extra);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int command);
+    public static int Set(int[] ids, bool visible) {{
+        int matched = 0;
+        EnumWindows((hWnd, extra) => {{
+            uint processId;
+            GetWindowThreadProcessId(hWnd, out processId);
+            if (Array.IndexOf(ids, (int)processId) >= 0) {{ ShowWindow(hWnd, visible ? 9 : 0); matched++; }}
+            return true;
+        }}, IntPtr.Zero);
+        return matched;
+    }}
+}}
+'@
+$windowIds = [int[]]::new($ids.Count)
+$ids.CopyTo($windowIds)
+$windowCount = [ScraperWindowControl{run_id}]::Set($windowIds, $show)
+if ($windowCount -eq 0) {{ exit 3 }}
+'''
+        for attempt in range(20):
+            try:
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return False
+            if result.returncode == 0:
+                with self._lock:
+                    self._browser_visibility[run_id] = visible
+                return True
+            if result.returncode != 3 or attempt == 19:
+                return False
+            threading.Event().wait(0.5)
+        return False
 
     # -------------------------------------------------------------- internal
     def _run_one(self, run_id: int) -> None:
@@ -123,13 +233,20 @@ class Runner:
                     run.status = "failed"
                     run.error = f"runner error: {exc}"[:4000]
                     run.finished_at = utcnow()
+                    db.add(Activity(
+                        user_id=run.user_id,
+                        action="run_failed",
+                        detail=f"{run.crawler_id} run #{run.id}: runner error",
+                    ))
                     db.commit()
         finally:
             with self._lock:
+                self._stop_requested.discard(run_id)
                 if cdp_port is not None:
                     self._reserved_ports.discard(cdp_port)
                 self._pending.discard(run_id)
                 self._procs.pop(run_id, None)
+                self._browser_visibility.pop(run_id, None)
 
     def _reserve_cdp_port(self) -> int:
         with self._lock:
@@ -169,6 +286,9 @@ class Runner:
             source_file = spec.cwd / name
             if source_file.is_file():
                 shutil.copy2(source_file, workspace / name)
+        for source_file in spec.cwd.glob("*_auth_state.json"):
+            if source_file.is_file():
+                shutil.copy2(source_file, workspace / source_file.name)
         for source_dir in spec.cwd.iterdir():
             if source_dir.is_dir() and (
                 "profile" in source_dir.name.casefold() or source_dir.name == "playwright"
@@ -192,6 +312,7 @@ class Runner:
             import_paths.append(existing_pythonpath)
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(import_paths)
+        env["PYTHONUNBUFFERED"] = "1"
         return script_path, workspace, env
 
     def _set_waiting(self, run_id: int, waiting: bool) -> None:
@@ -240,23 +361,30 @@ class Runner:
         with open(log_path, "a", encoding="utf-8", errors="replace") as log:
             log.write(f"$ {spec.python} {' '.join(args)}\n\n")
             log.flush()
-            proc = subprocess.Popen(
-                cmdline,
-                cwd=str(workspace),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
             with self._lock:
+                if run_id in self._stop_requested:
+                    self._stop_requested.discard(run_id)
+                    return
+                proc = subprocess.Popen(
+                    cmdline,
+                    cwd=str(workspace),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
                 self._procs[run_id] = proc
+                if spec.supports_live_visibility:
+                    self._browser_visibility[run_id] = True
             with SessionLocal() as db:
                 run = db.get(Run, run_id)
                 run.pid = proc.pid
                 db.commit()
+            if spec.id == "pacific-best" and not params.get("show") and not params.get("manual_login"):
+                self.set_browser_visibility(run_id, False)
 
             waiting = False
             last_progress: tuple[int, int] | None = None
@@ -281,21 +409,27 @@ class Runner:
             run = db.get(Run, run_id)
             run.returncode = returncode
             run.waiting_for_human = False
-            run.finished_at = utcnow()
             if run.status == "stopped":
-                pass  # user stopped it; keep status
-            elif returncode == 0 and output_path.exists():
-                run.status = "success"
-                if run.progress_total:
-                    run.progress_done = run.progress_total
-            elif returncode == 0:
-                run.status = "success"
-                run.error = "script exited 0 but produced no output file"
-                if run.progress_total:
-                    run.progress_done = run.progress_total
+                run.finished_at = run.finished_at or utcnow()
             else:
-                run.status = "failed"
-                run.error = f"exit code {returncode} — see log"
+                run.finished_at = utcnow()
+                if returncode == 0 and output_path.exists():
+                    run.status = "success"
+                    if run.progress_total:
+                        run.progress_done = run.progress_total
+                elif returncode == 0:
+                    run.status = "success"
+                    run.error = "script exited 0 but produced no output file"
+                    if run.progress_total:
+                        run.progress_done = run.progress_total
+                else:
+                    run.status = "failed"
+                    run.error = f"exit code {returncode} — see log"
+            db.add(Activity(
+                user_id=run.user_id,
+                action="run_success" if run.status == "success" else "run_failed" if run.status == "failed" else "run_stopped",
+                detail=f"{run.crawler_id} run #{run.id}: {run.status}",
+            ))
             db.commit()
 
 

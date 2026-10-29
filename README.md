@@ -29,8 +29,10 @@ flowchart LR
     Portal --> ScraperAPI["Scraper API :8000"]
     Portal --> UniverseUI["Universe UI :5175 at /universe/"]
     Portal --> UniverseAPI["Universe API :8002"]
-    Identity --> Global["global: users + activities"]
-    ScraperAPI --> Global
+    Identity --> Global["global: users + Portal activities"]
+    ScraperAPI --> GlobalUsers["global: users"]
+    ScraperAPI --> ScraperActivity["scrapping: activities"]
+    UniverseAPI --> UniverseActivity["universe: activities"]
     ScraperAPI --> Runs["Application schema: runs"]
     ScraperAPI --> Files["data/runs/<id>: logs + Excel"]
     UniverseAPI --> UniverseDB["ipart.universe: vehicle + vin"]
@@ -40,13 +42,13 @@ flowchart LR
 
 Portal Apps owns the user credentials. The Portal API checks credentials,
 issues the HTTP-only session cookie, manages accounts and profiles, and writes
-shared identity activity. Connected applications validate the same JWT cookie
+Portal-only activity. Connected applications validate the same JWT cookie
 using the same signing secret; they do not keep separate user credentials.
 
-On PostgreSQL, the shared `users` and `activities` tables are in schema
-`global`. Scraper run records remain in the configured application schema and
-refer to the shared user IDs. Existing identity tables are moved from the old
-application schema at Scraper API startup when the `global` tables are absent.
+On PostgreSQL, shared users and Portal activity are in schema `global`.
+Scraper activity and run records are in `scrapping`; Universe activity and
+domain data are in `universe`. Each app's activity table refers to shared user
+IDs but stores only that app's events.
 
 Both APIs read their database URL, database schema, JWT secret, and cookie
 security setting from `scrapper-site/backend/.env`. Set `cookie_secure=true`

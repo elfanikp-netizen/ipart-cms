@@ -8,16 +8,16 @@ from zipfile import is_zipfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..crawlers import CRAWLERS, get_crawler
 from ..db import SessionLocal
 from ..deps import get_current_user, log_activity
-from ..models import Run, User
+from ..models import Activity, Run, User, utcnow
 from ..runner import runner
-from ..schemas import QueueOut, RunOut
+from ..schemas import ActivityPageOut, QueueOut, RunOut
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -51,24 +51,36 @@ def run_artifact_path(run: Run, name: str) -> Path | None:
     return None
 
 
-def to_out(run: Run) -> RunOut:
+def to_out(run: Run, user: User | None = None) -> RunOut:
     spec = get_crawler(run.crawler_id)
-    resumable_status = run.status in {"stopped", "failed"} or (
-        run.crawler_id == "vin-lookup" and run.status in {"failed", "success"}
-    )
+    params = json.loads(run.params or "{}")
+    resumable_status = run.status in {"stopped", "failed"}
     out = RunOut.model_validate(run)
     out.crawler_name = spec.name if spec else run.crawler_id
     out.has_output = run_artifact_path(run, "output") is not None
     out.can_continue = (
         resumable_status
+        and bool(spec and spec.supports_resume)
         and run_artifact_path(run, "input") is not None
         and spec is not None
-        and spec.resolve_script(json.loads(run.params or "{}").get("site")).is_file()
+        and spec.resolve_script(params.get("site")).is_file()
         and spec.python.is_file()
     )
     out.supports_resume = bool(spec and spec.supports_resume)
+    out.can_manage = bool(user and (user.role == "superadmin" or run.user_id == user.id))
+    out.supports_live_visibility = bool(
+        spec
+        and spec.supports_live_visibility
+        and (not spec.supports_show or params.get("show") or spec.live_visibility_flag)
+    )
+    out.browser_visible = runner.browser_is_visible(run.id)
     out.username = run.user.username if run.user else ""
     return out
+
+
+def require_run_owner_or_admin(run: Run, user: User) -> None:
+    if user.role != "superadmin" and run.user_id != user.id:
+        raise HTTPException(403, "Only the run owner or a superadmin can perform this action")
 
 
 @router.get("/crawlers")
@@ -83,6 +95,83 @@ def queue_status(_: User = Depends(get_current_user)):
         active_run_id=runner.active_run_id(),
         active_run_ids=runner.active_run_ids(),
     )
+
+
+@router.get("/activity")
+def list_activity(
+    limit: int = 200,
+    q: str = "",
+    username: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    stmt = select(Activity).outerjoin(User, Activity.user_id == User.id).order_by(Activity.id.desc())
+    if user.role != "superadmin":
+        stmt = stmt.where(Activity.user_id == user.id)
+    elif username.strip():
+        stmt = stmt.where(User.username == username.strip())
+    if q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Activity.action.ilike(like), Activity.detail.ilike(like), User.username.ilike(like)))
+    rows = db.scalars(stmt.limit(max(1, min(limit, 1000)))).all()
+    return [{
+        "id": row.id,
+        "user_id": row.user_id,
+        "username": row.user.username if row.user else "?",
+        "action": row.action,
+        "detail": row.detail or "",
+        "created_at": row.created_at,
+    } for row in rows]
+
+
+@router.get("/activity/users")
+def activity_users(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "superadmin":
+        raise HTTPException(403, "Superadmin only")
+    rows = db.execute(
+        select(User.id, User.username)
+        .join(Activity, Activity.user_id == User.id)
+        .distinct()
+        .order_by(User.username)
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+@router.get("/activity/page", response_model=ActivityPageOut)
+def activity_page(
+    page: int = 1,
+    page_size: int = 25,
+    search: str = "",
+    username: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+    stmt = select(Activity).outerjoin(User, Activity.user_id == User.id)
+    if user.role != "superadmin":
+        stmt = stmt.where(Activity.user_id == user.id)
+    elif username.strip():
+        stmt = stmt.where(User.username == username.strip())
+    if search.strip():
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(or_(Activity.action.ilike(like), Activity.detail.ilike(like), User.username.ilike(like)))
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    rows = db.scalars(stmt.order_by(Activity.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+    return {
+        "items": [{
+            "id": row.id,
+            "user_id": row.user_id,
+            "username": row.user.username if row.user else "?",
+            "action": row.action,
+            "detail": row.detail or "",
+            "created_at": row.created_at,
+        } for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "pages": (total + page_size - 1) // page_size,
+    }
 
 
 @router.get("/network-status")
@@ -139,6 +228,7 @@ async def create_run(
     site: str = Form(""),
     description: str = Form(""),
     limit: int = Form(0),
+    delay: float = Form(1.5),
     fresh: bool = Form(False),
     show: bool = Form(False),
     debug: bool = Form(False),
@@ -166,6 +256,7 @@ async def create_run(
         "site": site.strip(),
         "description": description.strip(),
         "limit": limit,
+        "delay": delay,
         "fresh": fresh,
         "show": show,
         "debug": debug,
@@ -192,21 +283,21 @@ async def create_run(
     site_suffix = f" [{site.strip()}]" if site.strip() else ""
     description_suffix = f" description={description.strip()!r}" if description.strip() and spec.supports_description else ""
     log_activity(db, user, "create_run", f"queued {spec.name}{site_suffix}{description_suffix} (run #{run.id})")
-    return to_out(run)
+    return to_out(run, user)
 
 
 @router.get("/runs", response_model=list[RunOut])
-def list_runs(limit: int = 50, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_runs(limit: int = 50, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     runs = db.scalars(select(Run).order_by(Run.id.desc()).limit(limit)).all()
-    return [to_out(r) for r in runs]
+    return [to_out(r, user) for r in runs]
 
 
 @router.get("/runs/{run_id}", response_model=RunOut)
-def get_run(run_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    return to_out(run)
+    return to_out(run, user)
 
 
 @router.get("/runs/{run_id}/log")
@@ -232,19 +323,44 @@ def stop_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(ge
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
+    require_run_owner_or_admin(run, user)
     if run.status == "queued":
         runner.cancel_pending(run.id)
         run.status = "stopped"
+        run.finished_at = utcnow()
         db.commit()
         log_activity(db, user, "stop_run", f"stopped run #{run.id} (queued)")
     elif run.status == "running":
-        killed = runner.stop(run.id)
+        killed = runner.stop(run.id, run.pid)
+        if not killed:
+            raise HTTPException(409, "Crawler process could not be stopped; try again")
         run.status = "stopped"
+        run.finished_at = utcnow()
         db.commit()
         log_activity(db, user, "stop_run", f"stopped run #{run.id}")
-        if not killed:
-            raise HTTPException(409, "Process already exited")
-    return to_out(run)
+    return to_out(run, user)
+
+
+@router.post("/runs/{run_id}/browser-visibility", response_model=RunOut)
+def set_browser_visibility(
+    run_id: int,
+    visible: bool = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    run = db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    require_run_owner_or_admin(run, user)
+    spec = get_crawler(run.crawler_id)
+    if spec is None or not spec.supports_live_visibility:
+        raise HTTPException(409, "This crawler does not support live browser visibility control")
+    if run.status != "running":
+        raise HTTPException(409, "Browser visibility can only be changed during an active run")
+    if not runner.set_browser_visibility(run_id, visible):
+        raise HTTPException(409, "The crawler browser window is not available")
+    log_activity(db, user, "show_browser" if visible else "hide_browser", f"run #{run.id}")
+    return to_out(run, user)
 
 
 @router.post("/runs/{run_id}/continue", response_model=RunOut)
@@ -252,16 +368,18 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     run = db.get(Run, run_id)
     if run is None:
         raise HTTPException(404, "Run not found")
-    is_vin_terminal_run = run.crawler_id == "vin-lookup" and run.status in {"failed", "success"}
-    if run.status not in {"stopped", "failed"} and not is_vin_terminal_run:
+    require_run_owner_or_admin(run, user)
+    if run.status not in {"stopped", "failed"}:
         raise HTTPException(409, "Only stopped or failed runs can be continued")
-    if runner.active_run_id() == run_id:
+    if run_id in runner.active_run_ids():
         raise HTTPException(409, "The stopped crawler process is still shutting down")
 
     spec = get_crawler(run.crawler_id)
     params = json.loads(run.params or "{}")
     if spec is None or not spec.resolve_script(params.get("site")).exists():
         raise HTTPException(400, "Crawler script is unavailable")
+    if not spec.supports_resume:
+        raise HTTPException(409, "This crawler does not support continuing a previous run")
     if not spec.python.exists():
         raise HTTPException(400, "Crawler Python environment is unavailable")
 
@@ -276,6 +394,7 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
             raise HTTPException(409, "The saved partial output is not a valid Excel workbook and cannot be resumed safely; restore a valid output or start a new run")
 
     params["fresh"] = False
+    params["resume"] = run.crawler_id in {"ccc", "pacific-best"}
     run.params = json.dumps(params)
     run.status = "queued"
     run.error = None
@@ -289,16 +408,18 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     runner.enqueue(run.id)
     resume_detail = "from its saved output" if spec.supports_resume else "from the next unfinished input row"
     log_activity(db, user, "continue_run", f"continued run #{run.id} {resume_detail}")
-    return to_out(run)
+    return to_out(run, user)
 
 
 @router.get("/runs/{run_id}/output")
-def download_output(run_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def download_output(run_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
+    require_run_owner_or_admin(run, user)
     output_path = run_artifact_path(run, "output")
     if output_path is None:
         raise HTTPException(404, "No output file for this run")
+    log_activity(db, user, "download_output", f"downloaded output for run #{run.id}")
     filename = f"{run.crawler_id}_run{run.id}.xlsx"
     return FileResponse(output_path, filename=filename)

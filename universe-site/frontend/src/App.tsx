@@ -4,6 +4,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-r
 import { client, deleteRecord, downloadExcel, downloadVinExportByVehicleList, errorText, getFilterOptions, getPage, getVehicleOptions, importExcel, saveVehicle, saveVin } from "./api";
 import type { FilterOptions, ImportSummary, Page, Vehicle, VehicleOption, Vin } from "./api";
 import CccMarketPage from "./pages/CccMarketPage";
+import ActivityPage from "./pages/ActivityPage";
 
 type Dataset = "vehicles" | "vins" | "ccc";
 type MasterDataset = Exclude<Dataset, "ccc">;
@@ -20,6 +21,7 @@ function App() {
   const activeDataset: Dataset = location.pathname === "/market/ccc"
     ? "ccc"
     : location.pathname === "/vins" ? "vins" : "vehicles";
+  const activityActive = location.pathname === "/activity";
 
   useEffect(() => {
     client.get<PortalUser>("/api/auth/me")
@@ -43,6 +45,7 @@ function App() {
         <nav className="subnav" aria-label="Master data">
           <button className={activeDataset === "vehicles" ? "active" : ""} onClick={() => navigate("/vehicles")}><span>01</span>Vehicle</button>
           <button className={activeDataset === "vins" ? "active" : ""} onClick={() => navigate("/vins")}><span>02</span>VIN</button>
+          <button className={activityActive ? "active" : ""} onClick={() => navigate("/activity")}><span>03</span>Activity</button>
         </nav>
         <div className="menu-parent market-menu-parent"><span className="menu-parent-icon">▤</span>MARKET</div>
         <nav className="subnav" aria-label="Market">
@@ -51,12 +54,13 @@ function App() {
         <div className="sidebar-bottom"><a href="/">← Portal home</a><span>IPART · DATA SERVICES</span></div>
       </aside>
       <main className="main-area">
-        <header className="topbar"><div><span className="crumb">{activeDataset === "ccc" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
+        <header className="topbar"><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
         <Routes>
           <Route path="/" element={<Navigate to="/vehicles" replace />} />
           <Route path="/vehicles" element={<MasterDataPage dataset="vehicles" />} />
           <Route path="/vins" element={<MasterDataPage dataset="vins" />} />
           <Route path="/market/ccc" element={<CccMarketPage />} />
+          <Route path="/activity" element={<ActivityPage isAdmin={user.role === "superadmin"} />} />
           <Route path="*" element={<Navigate to="/vehicles" replace />} />
         </Routes>
       </main>

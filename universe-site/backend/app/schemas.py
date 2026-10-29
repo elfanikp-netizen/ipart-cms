@@ -103,3 +103,20 @@ class CccMarketPageOut(BaseModel):
     page_size: int
     total: int
     pages: int
+
+
+class ActivityOut(BaseModel):
+    id: int
+    user_id: int | None
+    username: str
+    action: str
+    detail: str
+    created_at: datetime
+
+
+class ActivityPageOut(BaseModel):
+    items: list[ActivityOut]
+    page: int
+    page_size: int
+    total: int
+    pages: int

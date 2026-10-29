@@ -16,6 +16,8 @@ class PortalUser:
     id: int
     is_active: bool
     app_access: dict[str, bool]
+    username: str = ""
+    role: str = "user"
 
 
 def get_db():
@@ -40,11 +42,17 @@ def get_current_user(
     except Exception as error:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired session") from error
     user_table = '"global"."users"' if db.bind and db.bind.dialect.name == "postgresql" else '"users"'
-    user_row = db.execute(text(f"SELECT id, is_active, app_access FROM {user_table} WHERE id = :user_id"),
+    user_row = db.execute(text(f"SELECT id, is_active, app_access, username, role FROM {user_table} WHERE id = :user_id"),
                           {"user_id": user_id}).mappings().first()
     if user_row is None or not user_row["is_active"]:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account disabled or removed")
     app_access = user_row["app_access"] or {}
     if not app_access.get("universe", False):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Universe access is not enabled for this account")
-    return PortalUser(id=user_row["id"], is_active=user_row["is_active"], app_access=app_access)
+    return PortalUser(
+        id=user_row["id"],
+        is_active=user_row["is_active"],
+        app_access=app_access,
+        username=user_row["username"],
+        role=user_row["role"],
+    )

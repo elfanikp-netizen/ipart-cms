@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { createUser, deleteUser, errorText, fetchMe, listUsers, login as loginRequest, logout as logoutRequest, updateProfile, updateUser } from "./api";
 import type { User } from "./api";
+import ActivityPage from "./pages/ActivityPage";
 
 interface AuthState {
   user: User | null;
@@ -107,6 +108,7 @@ function PortalShell() {
           <NavItem to="/" active={location.pathname === "/"}>Applications</NavItem>
           {user.role === "superadmin" && <NavItem to="/accounts" active={location.pathname === "/accounts"}>Accounts</NavItem>}
           <NavItem to="/profile" active={location.pathname === "/profile"}>Profile</NavItem>
+          <NavItem to="/activity" active={location.pathname === "/activity"}>Activity</NavItem>
         </nav>
         <div className="session-tools"><span className="session-user"><span className="avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span></span><button className="quiet-button" onClick={doSignOut}>Sign out</button></div>
       </header>
@@ -114,6 +116,7 @@ function PortalShell() {
         <Routes>
           <Route path="/" element={<ApplicationsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/activity" element={<ActivityPage isAdmin={user.role === "superadmin"} />} />
           <Route path="/accounts" element={user.role === "superadmin" ? <AccountsPage /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

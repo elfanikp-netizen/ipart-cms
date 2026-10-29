@@ -57,8 +57,11 @@ class CrawlerSpec:
     column_required: bool = False       # --column must be supplied
     column_allowed: bool = True         # --column can be supplied
     supports_limit: bool = True
+    supports_delay: bool = False
     supports_fresh: bool = True
     supports_show: bool = False
+    supports_live_visibility: bool = False
+    live_visibility_flag: str | None = None
     supports_debug: bool = False
     supports_manual_login: bool = False
     supports_description: bool = False
@@ -101,6 +104,9 @@ class CrawlerSpec:
         limit = int(params.get("limit") or 0)
         if limit > 0 and self.supports_limit:
             args += ["--limit", str(limit)]
+        delay = params.get("delay")
+        if delay is not None and self.id == "pacific-best":
+            args += ["--delay", str(float(delay))]
         supports_fresh = variant.supports_fresh if variant and variant.supports_fresh is not None else self.supports_fresh
         if params.get("fresh") and supports_fresh:
             args.append((variant.fresh_flag if variant else None) or self.fresh_flag)
@@ -112,6 +118,12 @@ class CrawlerSpec:
             args.append("--debug")
         if params.get("manual_login") and self.supports_manual_login:
             args.append("--manual-login")
+        if params.get("resume") and self.id == "ccc":
+            args.append("--resume")
+        if params.get("resume") and self.id == "pacific-best":
+            args.append("--resume")
+        if self.live_visibility_flag:
+            args.append(self.live_visibility_flag)
         return args
 
     def to_dict(self) -> dict:
@@ -123,8 +135,10 @@ class CrawlerSpec:
             "column_required": self.column_required,
             "column_allowed": self.column_allowed,
             "supports_limit": self.supports_limit,
+            "supports_delay": self.supports_delay,
             "supports_fresh": self.supports_fresh,
             "supports_show": self.supports_show or self.headed_flag is not None,
+            "supports_live_visibility": self.supports_live_visibility,
             "supports_debug": self.supports_debug,
             "supports_manual_login": self.supports_manual_login,
             "supports_description": self.supports_description,
@@ -156,6 +170,7 @@ def _brand_crawlers() -> list[CrawlerSpec]:
                 column_required=True,
                 supports_limit=False,
                 supports_show=False,   # always opens a visible Chrome via CDP
+                supports_live_visibility=True,
                 fresh_flag="--start-over",
                 sites=sites,
                 notes="Visible Chrome; solve Cloudflare manually when asked.",
@@ -169,6 +184,7 @@ def _registry() -> dict[str, CrawlerSpec]:
     carid_py = settings.carid_dir / "venv" / "Scripts" / "python.exe"
     ccc_py = settings.ccc_dir / ".venv" / "Scripts" / "python.exe"
     vins_py = settings.scrapper_vins_dir / ".venv" / "Scripts" / "python.exe"
+    pac_py = settings.pac_dir / ".venv" / "Scripts" / "python.exe"
     specs: list[CrawlerSpec] = [
         CrawlerSpec(
             id="ccc",
@@ -181,6 +197,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_limit=False,
             supports_fresh=False,
             supports_resume=True,
+            resume_requires_output=True,
             headed_flag="--headed",
             supports_description=True,
             description_default="A/M: CAPA",
@@ -195,9 +212,29 @@ def _registry() -> dict[str, CrawlerSpec]:
             cwd=settings.keystone_dir,
             python=keystone_py,
             supports_show=True,
+            supports_live_visibility=True,
             supports_manual_login=True,
             sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_crawler.py"),),
             notes="Headless by default; login via .env. Use --show / manual login if blocked.",
+        ),
+        CrawlerSpec(
+            id="pacific-best",
+            name="Pacific Best Parts",
+            group="Pacific Best",
+            script=settings.pac_dir / "pacificbest_crawler.py",
+            cwd=settings.pac_dir,
+            python=pac_py,
+            supports_limit=True,
+            supports_delay=True,
+            supports_fresh=False,
+            supports_show=True,
+            supports_live_visibility=True,
+            live_visibility_flag="--live-visibility",
+            supports_manual_login=True,
+            supports_resume=True,
+            resume_requires_output=True,
+            sites=(SiteVariant(key="pacificbest", label="Pacific Best", script="pacificbest_crawler.py"),),
+            notes="Pacific Best Parts catalog. Manual login requires a visible browser; credentials are read from the project .env.",
         ),
         CrawlerSpec(
             id="keystone-model",
@@ -208,6 +245,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             python=keystone_py,
             column_allowed=False,
             supports_show=True,
+            supports_live_visibility=True,
             supports_manual_login=True,
             sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_model_crawler.py"),),
         ),
@@ -220,6 +258,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             python=carid_py,
             supports_debug=True,
             supports_show=False,       # always visible Chrome via CDP
+            supports_live_visibility=True,
             fresh_flag="--no-resume",
             sites=(SiteVariant(key="carid", label="carid.com", script="carid_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
@@ -232,6 +271,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             cwd=settings.carid_dir,
             python=carid_py,
             supports_debug=True,
+            supports_live_visibility=True,
             fresh_flag="--no-resume",
             sites=(SiteVariant(key="carid", label="carid.com", script="carid_interchange_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
@@ -247,6 +287,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_fresh=True,
             fresh_flag="--start-over",
             supports_show=False,
+            supports_live_visibility=True,
             resume_requires_output=False,
             sites=(
                 SiteVariant(

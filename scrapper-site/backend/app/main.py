@@ -42,12 +42,67 @@ def migrate_identity_schema() -> None:
     shared_schema = preparer.quote_schema("global")
     legacy_schema = preparer.quote_schema(settings.database_schema)
     with engine.begin() as connection:
-        for table in ("users", "activities"):
+        for table in ("users",):
             if table in legacy_tables and table not in shared_tables:
                 quoted_table = preparer.quote(table)
                 connection.execute(
                     text(f"ALTER TABLE {legacy_schema}.{quoted_table} SET SCHEMA {shared_schema}")
                 )
+
+
+def migrate_scraper_activities() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    available_schemas = set(inspector.get_schema_names())
+    source_schemas = ["global"]
+    if settings.database_schema != "global" and settings.database_schema in available_schemas:
+        source_schemas.append(settings.database_schema)
+    with engine.begin() as connection:
+        if "activities" not in inspector.get_table_names(schema="global"):
+            connection.execute(text(
+                "CREATE TABLE global.activities ("
+                "id SERIAL PRIMARY KEY, user_id INTEGER NULL, action VARCHAR(30) NOT NULL, "
+                "detail TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+            ))
+        for source_schema in source_schemas:
+            if "activities" not in inspector.get_table_names(schema=source_schema):
+                continue
+            source_table = f'{engine.dialect.identifier_preparer.quote_schema(source_schema)}."activities"'
+            connection.execute(text(
+                "INSERT INTO scrapping.activities (user_id, action, detail, created_at) "
+                "SELECT source.user_id, source.action, source.detail, source.created_at "
+                f"FROM {source_table} AS source "
+                "WHERE source.action IN ('create_run', 'stop_run', 'continue_run', 'run_success', 'run_failed', "
+                "'run_stopped', 'download_output', 'show_browser', 'hide_browser') "
+                "AND NOT EXISTS (SELECT 1 FROM scrapping.activities AS target "
+                "WHERE target.user_id IS NOT DISTINCT FROM source.user_id "
+                "AND target.action = source.action AND target.detail = source.detail "
+                "AND target.created_at = source.created_at)"
+            ))
+            if source_schema != "scrapping":
+                connection.execute(text(
+                    f"DELETE FROM {source_table} WHERE action IN "
+                    "('create_run', 'stop_run', 'continue_run', 'run_success', 'run_failed', "
+                    "'run_stopped', 'download_output', 'show_browser', 'hide_browser')"
+                ))
+            if source_schema != "global":
+                connection.execute(text(
+                    f"INSERT INTO global.activities (user_id, action, detail, created_at) "
+                    f"SELECT source.user_id, source.action, source.detail, source.created_at FROM {source_table} AS source "
+                    "WHERE source.action IN ('login', 'logout', 'update_profile', 'create_user', 'update_user', 'delete_user') "
+                    "AND NOT EXISTS (SELECT 1 FROM global.activities AS target "
+                    "WHERE target.user_id IS NOT DISTINCT FROM source.user_id "
+                    "AND target.action = source.action AND target.detail = source.detail "
+                    "AND target.created_at = source.created_at)"
+                ))
+                connection.execute(text(
+                    f"DELETE FROM {source_table} WHERE action IN "
+                    "('login', 'logout', 'update_profile', 'create_user', 'update_user', 'delete_user')"
+                ))
 
 
 @asynccontextmanager
@@ -57,6 +112,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
     migrate_user_app_access()
     migrate_columns()
+    migrate_scraper_activities()
     runner.start()
     yield
 

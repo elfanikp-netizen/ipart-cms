@@ -24,12 +24,15 @@ Vite.
 | Keystone | Partslink, Find-Model | `C:\ELFANI\scrapper-keystone` |
 | CARiD | Parts, Interchange | `C:\ELFANI\scrapper` |
 | VIN Lookup | VinInspect, Google Search | `C:\ELFANI\scrapper-vins` |
+| Pacific Best | Pacific Best Parts | `C:\ELFANI\scrapper-pac` |
 | Brands (OEM Parts) | Acura, Audi, BMW, Chrysler, Ford, GMC, Honda, Hyundai, Infiniti, Kia, Lexus, Mazda, Nissan, Porsche, Subaru, Toyota, Volvo, VW | `C:\ELFANI\scrapper-brand\scrapper-*` |
 
 Crawler definitions live in [backend/app/crawlers.py](backend/app/crawlers.py).
 Adding a crawler script means registering it there. VIN Lookup runs with the
 `scrapper-vins\.venv` environment and lets each run choose VinInspect or Google
 Search in the Site selector.
+Pacific Best uses `scrapper-pac\.venv`, accepts OEM or PARTSLINK as the search
+column, and supports live browser show/hide during an active run.
 
 ## Start Scraper services
 
@@ -60,9 +63,14 @@ produced. The API resolves older absolute artifact paths against the current
 configured data directory so runs created before moving the workspace can still
 show logs and downloads.
 
-CARiD and brand crawlers may open a visible Chrome window. If a Cloudflare or
-human-verification check appears, the run is marked as waiting in the UI. Open
+CARiD, brand, Keystone (when started visible), and Pacific Best crawlers may
+open a visible Chrome window. If a Cloudflare or human-verification check
+appears, the run is marked as waiting in the UI. Open
 the Chrome window on the Scraper host, complete the check, and the run resumes.
+
+Run actions (stop, continue, and output download) are available only to the
+run's creator and superadmins. Only failed or stopped crawlers that declare
+resume support can be continued; successful runs are final.
 
 Stopping a run kills the crawler process tree, including Chrome. Restarting
 the Scraper API marks active or queued runs as failed; avoid restarting it while

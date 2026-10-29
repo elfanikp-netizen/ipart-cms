@@ -17,6 +17,14 @@ export interface Activity {
   created_at: string;
 }
 
+export interface ActivityPage {
+  items: Activity[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
 export interface Crawler {
   id: string;
   name: string;
@@ -25,6 +33,7 @@ export interface Crawler {
   column_required: boolean;
   column_allowed: boolean;
   supports_limit: boolean;
+  supports_delay: boolean;
   supports_fresh: boolean;
   supports_show: boolean;
   supports_debug: boolean;
@@ -51,6 +60,8 @@ export interface Run {
   has_output: boolean;
   can_continue: boolean;
   supports_resume: boolean;
+  can_manage: boolean;
+  supports_live_visibility: boolean;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

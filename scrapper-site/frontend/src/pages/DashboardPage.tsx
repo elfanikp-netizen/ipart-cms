@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const [site, setSite] = useState("");
   const [description, setDescription] = useState("");
   const [limit, setLimit] = useState(0);
+  const [delay, setDelay] = useState(1.5);
   const [fresh, setFresh] = useState(false);
   const [show, setShow] = useState(false);
   const [debug, setDebug] = useState(false);
@@ -81,7 +82,7 @@ export default function DashboardPage() {
     setShowVpnWarning(false);
     try {
       const run = await createRun(crawlerId, file, {
-        column, site, description, limit, fresh, show, debug, manual_login: manualLogin,
+        column, site, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
       });
       navigate(`/runs/${run.id}`);
     } catch (err) {
@@ -194,6 +195,12 @@ export default function DashboardPage() {
                   value={limit}
                   onChange={(e) => setLimit(Number(e.target.value))}
                 />
+              </label>
+            )}
+            {selected?.supports_delay && (
+              <label>
+                Delay between searches (seconds)
+                <input type="number" min={0} step={0.1} value={delay} onChange={(e) => setDelay(Number(e.target.value))} />
               </label>
             )}
           </div>
@@ -314,10 +321,13 @@ export default function DashboardPage() {
                   <td>{new Date(r.created_at).toLocaleString()}</td>
                   <td>{r.finished_at ? new Date(r.finished_at).toLocaleString() : "-"}</td>
                   <td className="actions">
-                    {(r.status === "queued" || r.status === "running") && (
+                    {r.can_manage
+                      && (r.status === "queued" || r.status === "running")
+                      && !(r.progress_total !== null && r.progress_total > 0 && (r.progress_done ?? 0) >= r.progress_total)
+                      && (
                       <button className="danger" onClick={() => onStop(r.id)}>■ Stop</button>
                     )}
-                    {r.can_continue && (
+                    {r.can_manage && r.can_continue && (
                       <button
                         className="small"
                         onClick={() => void onContinue(r.id)}
@@ -341,7 +351,8 @@ export default function DashboardPage() {
 function formatRuntime(run: Run): string {
   if (!run.started_at) return "-";
   const start = new Date(run.started_at).getTime();
-  const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
+  const terminalStatus = run.status === "stopped" || run.status === "failed" || run.status === "success";
+  const end = run.finished_at ? new Date(run.finished_at).getTime() : (terminalStatus ? start : Date.now());
   const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
   const days = Math.floor(totalSeconds / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
