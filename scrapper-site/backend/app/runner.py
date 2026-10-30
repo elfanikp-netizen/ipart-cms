@@ -330,6 +330,46 @@ if ($windowCount -eq 0) {{ exit 3 }}
                 run.progress_total = total
                 db.commit()
 
+    def _handle_output_line(
+        self,
+        run_id: int,
+        line: str,
+        waiting: bool,
+        last_progress: tuple[int, int] | None,
+    ) -> tuple[bool, tuple[int, int] | None]:
+        low = line.lower()
+        if not waiting and any(marker in low for marker in WAIT_MARKERS):
+            waiting = True
+            self._set_waiting(run_id, True)
+        elif waiting and any(marker in low for marker in CLEAR_MARKERS):
+            waiting = False
+            self._set_waiting(run_id, False)
+        progress = _parse_progress(line)
+        if progress and progress != last_progress and progress[1] > 0:
+            last_progress = progress
+            self._set_progress(run_id, progress[0], progress[1])
+        return waiting, last_progress
+
+    def _monitor_process_output(self, proc: subprocess.Popen, log_path: Path, run_id: int) -> int:
+        waiting = False
+        last_progress: tuple[int, int] | None = None
+        with open(log_path, "r", encoding="utf-8", errors="replace") as output:
+            output.seek(0, os.SEEK_END)
+            while proc.poll() is None:
+                line = output.readline()
+                if line:
+                    waiting, last_progress = self._handle_output_line(
+                        run_id, line, waiting, last_progress
+                    )
+                else:
+                    threading.Event().wait(0.1)
+            returncode = proc.wait()
+            while line := output.readline():
+                waiting, last_progress = self._handle_output_line(
+                    run_id, line, waiting, last_progress
+                )
+        return returncode
+
     def _execute(self, run_id: int, cdp_port: int) -> None:
         with SessionLocal() as db:
             run = db.get(Run, run_id)
@@ -369,12 +409,8 @@ if ($windowCount -eq 0) {{ exit 3 }}
                     cmdline,
                     cwd=str(workspace),
                     env=env,
-                    stdout=subprocess.PIPE,
+                    stdout=log,
                     stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
                 )
                 self._procs[run_id] = proc
                 if spec.supports_live_visibility:
@@ -386,24 +422,7 @@ if ($windowCount -eq 0) {{ exit 3 }}
             if spec.id == "pacific-best" and not params.get("show") and not params.get("manual_login"):
                 self.set_browser_visibility(run_id, False)
 
-            waiting = False
-            last_progress: tuple[int, int] | None = None
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                log.write(line)
-                log.flush()
-                low = line.lower()
-                if not waiting and any(m in low for m in WAIT_MARKERS):
-                    waiting = True
-                    self._set_waiting(run_id, True)
-                elif waiting and any(m in low for m in CLEAR_MARKERS):
-                    waiting = False
-                    self._set_waiting(run_id, False)
-                progress = _parse_progress(line)
-                if progress and progress != last_progress and progress[1] > 0:
-                    last_progress = progress
-                    self._set_progress(run_id, progress[0], progress[1])
-            returncode = proc.wait()
+            returncode = self._monitor_process_output(proc, log_path, run_id)
 
         with SessionLocal() as db:
             run = db.get(Run, run_id)

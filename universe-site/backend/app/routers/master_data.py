@@ -192,7 +192,7 @@ def list_vehicles(
     _: PortalUser = Depends(get_current_user),
 ):
     result = paginate(db, query_vehicles(db, search, year, make), page, page_size,
-                      (Vehicle.year.desc(), Vehicle.make_key, Vehicle.model_key))
+                      (Vehicle.created_at.desc(),))
     ids = [vehicle.id for vehicle in result["items"]]
     counts = dict(db.execute(select(Vin.id_vehicle, func.count(Vin.id)).where(Vin.id_vehicle.in_(ids))
                              .group_by(Vin.id_vehicle)).all()) if ids else {}
@@ -312,7 +312,7 @@ def list_vins(
     if vehicle_id is not None:
         stmt = stmt.where(Vin.id_vehicle == vehicle_id)
     result = paginate(db, stmt, page, page_size,
-                      (Vehicle.year.desc(), Vehicle.make_key, Vehicle.model_key, Vin.vin_key))
+                      (Vin.created_at.desc(),))
     result["items"] = [VinOut.model_validate(item) for item in result["items"]]
     return result
 
