@@ -164,6 +164,20 @@ export async function getCccMarketPage(params: {
   return (await client.get<CccMarketPage>("/api/universe/market/ccc", { params })).data;
 }
 
+export async function exportCccMarketCrawls(params: {
+  search: string;
+  oem: string;
+  vin: string;
+  description: string;
+  vendor: string;
+}) {
+  const response = await client.get<Blob>("/api/universe/market/ccc/export", {
+    params,
+    responseType: "blob",
+  });
+  saveBlob(response.data, "ccc-crawls.xlsx");
+}
+
 export async function getCccMarketFilters() {
   return (await client.get<CccMarketFilters>("/api/universe/market/ccc/filters")).data;
 }

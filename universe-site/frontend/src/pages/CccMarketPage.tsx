@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import "./lowest-price.css";
-import { errorText, exportCccLowestPriceDetails, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, importCccMarketExcel } from "../api";
+import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, importCccMarketExcel } from "../api";
 import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord } from "../api";
 
 const EMPTY_FILTERS: CccMarketFilters = { oems: [], vins: [], descriptions: [], vendors: [] };
@@ -37,6 +37,7 @@ export default function CccMarketPage() {
   const [pages, setPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [exportingCrawls, setExportingCrawls] = useState(false);
   const [error, setError] = useState("");
   const [report, setReport] = useState<CccMarketImportSummary | null>(null);
   const [fromDate, setFromDate] = useState(previousMonthDate);
@@ -150,6 +151,18 @@ export default function CccMarketPage() {
     }
   };
 
+  const exportCrawls = async () => {
+    setExportingCrawls(true);
+    setError("");
+    try {
+      await exportCccMarketCrawls({ search, oem, vin, description, vendor });
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setExportingCrawls(false);
+    }
+  };
+
   const offerColumns = [...new Set(offers.flatMap((offer) => Object.keys(offer.market_data)))];
   const visibleOffers = offers.filter((offer) => offerColumns.every((column) => {
     const filter = (columnSearch[column] ?? "").trim().toLocaleLowerCase();
@@ -213,6 +226,7 @@ export default function CccMarketPage() {
           {importing ? "Importing…" : "↑ Import Excel"}
           <input type="file" accept=".xlsx,.xlsm" onChange={onImport} disabled={importing} />
         </label>
+        <button className="outline-button" disabled={exportingCrawls} onClick={() => void exportCrawls()}>{exportingCrawls ? "Exporting…" : "↓ Export Excel"}</button>
       </div> : <div className="ccc-toolbar ccc-date-toolbar">
         <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>

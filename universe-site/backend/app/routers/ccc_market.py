@@ -188,6 +188,50 @@ def list_ccc_market_records(
     }
 
 
+@router.get("/export")
+def export_ccc_market_records(
+    oem: str = "",
+    vin: str = "",
+    description: str = "",
+    vendor: str = "",
+    search: str = "",
+    db: Session = Depends(get_db),
+    user: PortalUser = Depends(get_current_user),
+):
+    stmt = filtered_ccc_records(db, oem, vin, description, vendor, search)
+    groups = stmt.with_only_columns(
+        CccMarketRecord.oem,
+        CccMarketRecord.vin,
+        CccMarketRecord.crawl_date,
+        func.count(CccMarketRecord.id).label("offer_count"),
+    ).group_by(
+        CccMarketRecord.oem,
+        CccMarketRecord.vin,
+        CccMarketRecord.crawl_date,
+    ).order_by(
+        CccMarketRecord.crawl_date.desc(),
+        CccMarketRecord.oem,
+        CccMarketRecord.vin,
+    )
+    rows = db.execute(groups).all()
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("CCC Crawls")
+    sheet.append(["OEM", "VIN", "Crawl Date", "Offer Count"])
+    for row in rows:
+        crawl_date = row.crawl_date.replace(tzinfo=None) if row.crawl_date.tzinfo else row.crawl_date
+        sheet.append([row.oem, row.vin, crawl_date, row.offer_count])
+    log_activity(db, user, "export_ccc_crawls", f"exported {len(rows)} filtered CCC crawls")
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    stream.seek(0)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="ccc-crawls.xlsx"'},
+    )
+
+
 def lowest_price_rows(db: Session, from_date: date | None, to_date: date | None) -> list[dict[str, Any]]:
     stmt = select(
         CccMarketRecord.oem,
