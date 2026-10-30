@@ -281,3 +281,60 @@ export interface ActivityPage {
 export async function getUniverseActivity(params: { page: number; page_size: number; search: string; username?: string }) {
   return (await client.get<ActivityPage>("/api/universe/activity", { params })).data;
 }
+
+export interface Oem {
+  id: number;
+  id_vin: number;
+  oem: string;
+  description: string;
+  notes: string;
+  vin: string;
+  year: number;
+  make: string;
+  model: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OemImportSummary {
+  vehicles_created: number;
+  vins_created: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
+export async function importOemsExcel(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return (await client.post<OemImportSummary>("/api/universe/oems/import", form)).data;
+}
+
+export async function downloadOemsExcel(search = "") {
+  const response = await client.get<Blob>("/api/universe/oems/export", {
+    params: { search: search || undefined },
+    responseType: "blob",
+  });
+  saveBlob(response.data, "oems.xlsx");
+}
+
+export async function downloadOemsByList(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await client.post<Blob>("/api/universe/oems/export-by-list", form, { responseType: "blob" });
+  saveBlob(response.data, "oems-by-list.xlsx");
+}
+
+export type OemValues = Pick<Oem, "id_vin" | "oem" | "description" | "notes">;
+
+export async function saveOem(id: number | null, values: OemValues) {
+  const response = id === null
+    ? await client.post<Oem>("/api/universe/oems", values)
+    : await client.put<Oem>(`/api/universe/oems/${id}`, values);
+  return response.data;
+}
+
+export async function deleteOem(id: number) {
+  await client.delete(`/api/universe/oems/${id}`);
+}

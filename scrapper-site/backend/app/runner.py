@@ -14,7 +14,7 @@ from pathlib import Path
 from .config import settings
 from .crawlers import get_crawler
 from .db import SessionLocal
-from .models import Run, utcnow
+from .models import Activity, Run, utcnow
 
 # Lines that mean the script is parked on a Cloudflare / human check
 WAIT_MARKERS = (

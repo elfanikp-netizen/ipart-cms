@@ -8,6 +8,7 @@ from .db import Base, engine
 APP_SCHEMA = "universe" if engine.dialect.name == "postgresql" else None
 IDENTITY_SCHEMA = "global" if engine.dialect.name == "postgresql" else None
 VEHICLE_TABLE = "universe.vehicle" if APP_SCHEMA else "vehicle"
+VIN_TABLE = "universe.vin" if APP_SCHEMA else "vin"
 
 
 def utcnow() -> datetime:
@@ -57,6 +58,29 @@ class Vin(Base):
     updated_by = Column(Integer, nullable=True)
 
     vehicle = relationship("Vehicle", back_populates="vins")
+    oems = relationship("Oem", back_populates="vin", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class Oem(Base):
+    __tablename__ = "oem"
+    __table_args__ = (
+        UniqueConstraint("id_vin", "oem_key", name="uq_oem_vin_oem"),
+        Index("ix_oem_key", "oem_key"),
+        {"schema": APP_SCHEMA} if APP_SCHEMA else {},
+    )
+
+    id = Column(Integer, primary_key=True)
+    id_vin = Column(ForeignKey(f"{VIN_TABLE}.id", ondelete="CASCADE"), nullable=False, index=True)
+    oem = Column(String(150), nullable=False)
+    oem_key = Column(String(150), nullable=False)
+    description = Column(Text, nullable=False, default="")
+    notes = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    created_by = Column(Integer, nullable=True)
+    updated_by = Column(Integer, nullable=True)
+
+    vin = relationship("Vin", back_populates="oems")
 
 
 class CccMarketRecord(Base):

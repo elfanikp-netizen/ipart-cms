@@ -9,6 +9,7 @@ identity and Scraper run data. For the full platform setup, see the
 
 - `vehicle`: unique Year/Make/Model, normalized for case and whitespace.
 - `vin`: references a vehicle through `id_vehicle`; VINs are unique per vehicle.
+- `oem`: references a VIN through `id_vin`; OEM numbers are unique per VIN.
 - `universe.ccc_market_data`: CCC crawl summaries and decoded market results,
   unique by OEM, VIN, and crawl date.
 - PostgreSQL target: database `ipart`, schema `universe`.
@@ -18,8 +19,8 @@ identity and Scraper run data. For the full platform setup, see the
 
 ## Master Data
 
-The Vehicle and VIN lists use 10 rows per page. Both support text search and
-year/make filters; VIN also has a model filter.
+The Vehicle, VIN, and OEM lists use 10 rows per page. They support text search
+across their displayed fields and related vehicle data.
 
 Vehicle import/export uses exactly these Excel columns:
 
@@ -35,6 +36,19 @@ VIN imports resolve or create the matching vehicle first. Imports update
 existing matching records, skip unchanged duplicates, and never create a second
 vehicle with the same Year/Make/Model or a second VIN for the same vehicle.
 Workbook extensions supported are `.xlsx` and `.xlsm`.
+
+OEM import/export uses these columns:
+
+| OEM | VIN | Year | Make | Model | Description | Notes |
+|---|---|---:|---|---|---|---|
+
+OEM and VIN are required for import. Year, Make, and Model are optional as a
+group: when present, import resolves or creates the vehicle and its VIN; when
+omitted, the VIN must already identify exactly one vehicle. An OEM/VIN match
+updates the existing record. OEM export can use the current search or an
+uploaded list workbook containing an `OEM` column and optional `VIN` column;
+OEM-only rows export all related VIN records, while OEM plus VIN narrows the
+match to that specific vehicle.
 
 ## Market Data: CCC
 
@@ -113,6 +127,10 @@ All routes are under `/api/universe` and require a valid Portal session:
 | `DELETE /vins/{id}` | Delete a VIN |
 | `GET /vins/export` | Export filtered VINs as Excel |
 | `POST /vins/import` | Import vehicles and VINs from Excel |
+| `GET /oems` | Search and page OEMs with related VIN and vehicle fields |
+| `GET /oems/export` | Export all OEMs or those matching a search |
+| `POST /oems/export-by-list` | Export OEMs matching an uploaded OEM/VIN workbook |
+| `POST /oems/import` | Import OEMs and resolve related vehicles and VINs |
 | `GET /market/ccc` | Filter and page CCC market data, newest crawl first |
 | `GET /market/ccc/filters` | List distinct CCC OEM, VIN, description, and vendor filters |
 | `POST /market/ccc/import` | Import or replace CCC market data from Excel |
