@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "./lowest-price.css";
-import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, importCccMarketExcel } from "../api";
+import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
 import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord, CccPriceHistory, CccVendorDashboard } from "../api";
 import SearchSelect from "../components/SearchSelect";
 
@@ -48,6 +48,9 @@ export default function CccMarketPage() {
   const [lowestError, setLowestError] = useState("");
   const [historyOem, setHistoryOem] = useState("");
   const [historyVin, setHistoryVin] = useState("");
+  const [historyOemOptions, setHistoryOemOptions] = useState<string[]>([]);
+  const [historyVinOptions, setHistoryVinOptions] = useState<string[]>([]);
+  const [historyOptionsLoading, setHistoryOptionsLoading] = useState(false);
   const [historyDescription, setHistoryDescription] = useState("");
   const [priceHistory, setPriceHistory] = useState<CccPriceHistory | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -73,6 +76,26 @@ export default function CccMarketPage() {
   useEffect(() => {
     getCccMarketFilters().then(setFilters).catch((reason) => setError(errorText(reason)));
   }, []);
+
+  useEffect(() => {
+    if (activeView !== "history") return;
+    let current = true;
+    setHistoryOptionsLoading(true);
+    Promise.all([
+      getCccVehicleOptions(historyOem, ""),
+      getCccVehicleOptions("", historyVin),
+    ])
+      .then(([vinResult, oemResult]) => {
+        if (!current) return;
+        setHistoryVinOptions(vinResult.vins);
+        setHistoryOemOptions(oemResult.oems);
+        if (historyOem && !oemResult.oems.includes(historyOem)) setHistoryOem("");
+        if (historyVin && !vinResult.vins.includes(historyVin)) setHistoryVin("");
+      })
+      .catch((reason) => { if (current) setHistoryError(errorText(reason)); })
+      .finally(() => { if (current) setHistoryOptionsLoading(false); });
+    return () => { current = false; };
+  }, [activeView, historyOem, historyVin]);
 
   useEffect(() => {
     if (!dashboardVendor && filters.vendors.length) {
@@ -291,8 +314,8 @@ export default function CccMarketPage() {
         <button className="outline-button" disabled={exportingCrawls} onClick={() => void exportCrawls()}>{exportingCrawls ? "Exporting…" : "↓ Export Excel"}</button>
       </div> : <div className="ccc-toolbar ccc-date-toolbar">
         {activeView === "history" && <>
-          <SearchSelect label="OEM" value={historyOem} options={filters.oems.map((item) => ({ label: item, value: item }))} placeholder="Select OEM" onChange={setHistoryOem} className="ccc-filter" />
-          <SearchSelect label="VIN" value={historyVin} options={filters.vins.map((item) => ({ label: item, value: item }))} placeholder="Select VIN" onChange={setHistoryVin} className="ccc-filter" />
+          <SearchSelect label="OEM" value={historyOem} options={historyOemOptions.map((item) => ({ label: item, value: item }))} placeholder="Search OEM" loading={historyOptionsLoading} emptyMessage="No matching OEMs" clearable onChange={setHistoryOem} className="ccc-filter" />
+          <SearchSelect label="VIN" value={historyVin} options={historyVinOptions.map((item) => ({ label: item, value: item }))} placeholder={historyOem ? "VINs for selected OEM" : "Search VIN"} loading={historyOptionsLoading} emptyMessage="No matching VINs" clearable onChange={setHistoryVin} className="ccc-filter" />
           <SearchSelect label="Description" value={historyDescription} options={filters.descriptions.map((item) => ({ label: item, value: item }))} placeholder="Select description" onChange={setHistoryDescription} className="ccc-filter" />
         </>}
         <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>

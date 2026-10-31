@@ -132,6 +132,11 @@ export interface CccMarketFilters {
   vendors: string[];
 }
 
+export interface CccVehicleOptions {
+  oems: string[];
+  vins: string[];
+}
+
 export interface CccLowestPriceSummary {
   from_date: string | null;
   to_date: string | null;
@@ -231,6 +236,12 @@ export async function exportCccMarketCrawls(params: {
 
 export async function getCccMarketFilters() {
   return (await client.get<CccMarketFilters>("/api/universe/market/ccc/filters")).data;
+}
+
+export async function getCccVehicleOptions(oem = "", vin = "") {
+  return (await client.get<CccVehicleOptions>("/api/universe/market/ccc/vehicle-options", {
+    params: { oem: oem || undefined, vin: vin || undefined },
+  })).data;
 }
 
 export async function getCccMarketOffers(group: Pick<CccMarketRecord, "oem" | "vin" | "crawl_date">) {

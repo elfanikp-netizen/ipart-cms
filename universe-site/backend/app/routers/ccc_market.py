@@ -136,6 +136,25 @@ def ccc_market_filters(db: Session = Depends(get_db), _: PortalUser = Depends(ge
     }
 
 
+@router.get("/vehicle-options")
+def ccc_vehicle_options(
+    oem: str = "",
+    vin: str = "",
+    db: Session = Depends(get_db),
+    _: PortalUser = Depends(get_current_user),
+):
+    stmt = select(CccMarketRecord.oem, CccMarketRecord.vin).distinct()
+    if oem.strip():
+        stmt = stmt.where(CccMarketRecord.oem == oem.strip())
+    if vin.strip():
+        stmt = stmt.where(CccMarketRecord.vin == vin.strip())
+    rows = db.execute(stmt.order_by(CccMarketRecord.oem, CccMarketRecord.vin)).all()
+    return {
+        "oems": sorted({row.oem for row in rows if row.oem}),
+        "vins": sorted({row.vin for row in rows if row.vin}),
+    }
+
+
 @router.get("/offers")
 def get_ccc_market_offers(
     oem: str = Query(..., min_length=1),

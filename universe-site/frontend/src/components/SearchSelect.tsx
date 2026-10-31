@@ -11,6 +11,7 @@ interface SearchSelectProps {
   options: SearchSelectOption[];
   placeholder?: string;
   allowCustom?: boolean;
+  clearable?: boolean;
   className?: string;
   onSearch?: (query: string) => void;
   selectedLabel?: string;
@@ -25,6 +26,7 @@ export default function SearchSelect({
   options,
   placeholder,
   allowCustom = false,
+  clearable = false,
   className = "",
   onSearch,
   selectedLabel: selectedLabelOverride,
@@ -58,7 +60,7 @@ export default function SearchSelect({
     setOpen(false);
   };
 
-  return <div className={`search-select${className ? ` ${className}` : ""}`} ref={rootRef}>
+  return <div className={`search-select${className ? ` ${className}` : ""}${clearable && value ? " has-clear" : ""}`} ref={rootRef}>
     <label htmlFor={pickerId}>{label}</label>
     <input
       id={pickerId}
@@ -100,6 +102,19 @@ export default function SearchSelect({
         }
       }}
     />
+    {clearable && value && <button
+      type="button"
+      className="search-select-clear"
+      aria-label={`Clear ${label.toLocaleLowerCase()}`}
+      title={`Clear ${label.toLocaleLowerCase()}`}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => {
+        onChange("");
+        setQuery("");
+        setActiveIndex(0);
+        setOpen(true);
+      }}
+    >×</button>}
     {open && <div className="search-select-options" id={`${pickerId}-options`} role="listbox" aria-label={`${label} options`}>
       {filtered.length ? filtered.slice(0, 100).map((option, index) => <button
         id={`${pickerId}-${index}`}
