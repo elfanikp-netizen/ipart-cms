@@ -26,7 +26,7 @@ export default function SearchSelect({
   options,
   placeholder,
   allowCustom = false,
-  clearable = false,
+  clearable = true,
   className = "",
   onSearch,
   selectedLabel: selectedLabelOverride,
@@ -40,6 +40,7 @@ export default function SearchSelect({
   const rootRef = useRef<HTMLDivElement>(null);
   const pickerId = useId();
   const selectedLabel = selectedLabelOverride ?? options.find((option) => option.value === value)?.label ?? value;
+  const hasClearValue = Boolean(value || selectedLabel || query);
   const filtered = options.filter((option) => option.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
 
   useEffect(() => {
@@ -60,11 +61,11 @@ export default function SearchSelect({
     setOpen(false);
   };
 
-  return <div className={`search-select${className ? ` ${className}` : ""}${clearable && value ? " has-clear" : ""}`} ref={rootRef}>
+  return <div className={`search-select${className ? ` ${className}` : ""}${clearable && hasClearValue ? " has-clear" : ""}`} ref={rootRef}>
     <label htmlFor={pickerId}>{label}</label>
     <input
       id={pickerId}
-      type="search"
+      type="text"
       role="combobox"
       aria-autocomplete="list"
       aria-expanded={open}
@@ -102,13 +103,14 @@ export default function SearchSelect({
         }
       }}
     />
-    {clearable && value && <button
+    {clearable && hasClearValue && <button
       type="button"
       className="search-select-clear"
       aria-label={`Clear ${label.toLocaleLowerCase()}`}
       title={`Clear ${label.toLocaleLowerCase()}`}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => {
+        onSearch?.("");
         onChange("");
         setQuery("");
         setActiveIndex(0);
