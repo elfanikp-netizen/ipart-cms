@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { client, errorText, getPage, saveOem } from "../api";
 import type { FormEvent } from "react";
 import type { Oem, OemValues, Page, Vin } from "../api";
+import SearchSelect from "./SearchSelect";
 
 export default function OemForm({ value, onSaved, onCancel }: {
   value: Oem | null;
@@ -11,7 +12,6 @@ export default function OemForm({ value, onSaved, onCancel }: {
   const [vinSearch, setVinSearch] = useState(value ? `${value.vin} · ${value.year} ${value.make} ${value.model}` : "");
   const [selectedVin, setSelectedVin] = useState(value ? String(value.id_vin) : "");
   const [vins, setVins] = useState<Vin[]>([]);
-  const [listOpen, setListOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -40,7 +40,6 @@ export default function OemForm({ value, onSaved, onCancel }: {
     event.preventDefault();
     if (!selectedVin) {
       setError("Select a VIN from the search results.");
-      setListOpen(true);
       return;
     }
     const form = new FormData(event.currentTarget);
@@ -63,38 +62,25 @@ export default function OemForm({ value, onSaved, onCancel }: {
 
   return <form className="record-form" onSubmit={submit}>
     <div className="form-grid">
-      <label className="full-field vehicle-picker">VIN and vehicle
-        <input
-          name="vin_search"
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={listOpen}
-          aria-controls="oem-vin-options"
-          value={vinSearch}
-          onFocus={() => setListOpen(true)}
-          onBlur={() => window.setTimeout(() => setListOpen(false), 120)}
-          onChange={(event) => { setVinSearch(event.target.value); setSelectedVin(""); setListOpen(true); }}
+      <div className="full-field">
+        <SearchSelect
+          label="VIN and vehicle"
+          value={selectedVin}
+          selectedLabel={vinSearch}
+          options={vins.map((vin) => ({ label: `${vin.vin} · ${vin.vehicle.year} ${vin.vehicle.make} ${vin.vehicle.model}`, value: String(vin.id) }))}
           placeholder="Search VIN, year, make, or model"
-          autoComplete="off"
-          required
+          onSearch={(query) => { setVinSearch(query); setSelectedVin(""); }}
+          loading={loading}
+          emptyMessage={error || "No matching VINs"}
+          onChange={(vinId) => {
+            const vin = vins.find((item) => String(item.id) === vinId);
+            setSelectedVin(vinId);
+            if (vin) setVinSearch(`${vin.vin} · ${vin.vehicle.year} ${vin.vehicle.make} ${vin.vehicle.model}`);
+          }}
         />
         <input type="hidden" name="id_vin" value={selectedVin} />
-        {listOpen && <div id="oem-vin-options" className="vehicle-picker-options" role="listbox">
-          {vins.length ? vins.map((vin) => <button
-            key={vin.id}
-            type="button"
-            role="option"
-            aria-selected={selectedVin === String(vin.id)}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              setSelectedVin(String(vin.id));
-              setVinSearch(`${vin.vin} · ${vin.vehicle.year} ${vin.vehicle.make} ${vin.vehicle.model}`);
-              setListOpen(false);
-            }}
-          >{vin.vin} · {vin.vehicle.year} {vin.vehicle.make} {vin.vehicle.model}</button>) : <span className="vehicle-picker-empty">{loading ? "Searching…" : error || "No matching VINs"}</span>}
-        </div>}
         {!selectedVin && <small className="field-error">Select an existing VIN.</small>}
-      </label>
+      </div>
       <label className="full-field">OEM<input name="oem" maxLength={150} defaultValue={value?.oem ?? ""} required /></label>
       <label className="full-field">Description<input name="description" maxLength={4000} defaultValue={value?.description ?? ""} /></label>
       <label className="full-field">Notes<textarea name="notes" rows={3} maxLength={4000} defaultValue={value?.notes ?? ""} /></label>

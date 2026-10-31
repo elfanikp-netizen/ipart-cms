@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import String, cast, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
@@ -311,6 +311,7 @@ def list_vins(
     stmt = query_vins(db, search, year, make, model)
     if vehicle_id is not None:
         stmt = stmt.where(Vin.id_vehicle == vehicle_id)
+    stmt = stmt.options(joinedload(Vin.vehicle))
     result = paginate(db, stmt, page, page_size,
                       (Vin.created_at.desc(),))
     result["items"] = [VinOut.model_validate(item) for item in result["items"]]

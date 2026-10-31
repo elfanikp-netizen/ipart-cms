@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import "./lowest-price.css";
-import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, importCccMarketExcel } from "../api";
-import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord } from "../api";
+import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, importCccMarketExcel } from "../api";
+import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord, CccPriceHistory, CccVendorDashboard } from "../api";
+import SearchSelect from "../components/SearchSelect";
 
 const EMPTY_FILTERS: CccMarketFilters = { oems: [], vins: [], descriptions: [], vendors: [] };
 const PAGE_SIZE = 25;
@@ -24,7 +25,7 @@ function previousMonthDate(): string {
 }
 
 export default function CccMarketPage() {
-  const [activeView, setActiveView] = useState<"crawls" | "lowest">("crawls");
+  const [activeView, setActiveView] = useState<"dashboard" | "crawls" | "lowest" | "history">("dashboard");
   const [items, setItems] = useState<Pick<CccMarketRecord, "oem" | "vin" | "crawl_date">[]>([]);
   const [filters, setFilters] = useState<CccMarketFilters>(EMPTY_FILTERS);
   const [search, setSearch] = useState("");
@@ -45,6 +46,17 @@ export default function CccMarketPage() {
   const [lowestSummary, setLowestSummary] = useState<CccLowestPriceSummary | null>(null);
   const [lowestLoading, setLowestLoading] = useState(false);
   const [lowestError, setLowestError] = useState("");
+  const [historyOem, setHistoryOem] = useState("");
+  const [historyVin, setHistoryVin] = useState("");
+  const [historyDescription, setHistoryDescription] = useState("");
+  const [priceHistory, setPriceHistory] = useState<CccPriceHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [dashboardVendor, setDashboardVendor] = useState("");
+  const [dashboardDescription, setDashboardDescription] = useState("");
+  const [dashboardData, setDashboardData] = useState<CccVendorDashboard | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState("");
   const [detailSelection, setDetailSelection] = useState<{ vendor: string; description: string; outcome: "won" | "lost"; metric: "oem" | "crawl" } | null>(null);
   const [lowestDetails, setLowestDetails] = useState<CccLowestPriceDetail[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -63,6 +75,25 @@ export default function CccMarketPage() {
   }, []);
 
   useEffect(() => {
+    if (!dashboardVendor && filters.vendors.length) {
+      setDashboardVendor(filters.vendors.find((item) => item.toLocaleLowerCase().includes("ipart")) ?? filters.vendors[0]);
+    }
+  }, [dashboardVendor, filters.vendors]);
+
+  useEffect(() => {
+    if (activeView !== "dashboard" || !dashboardVendor) return;
+    let current = true;
+    setDashboardData(null);
+    setDashboardLoading(true);
+    setDashboardError("");
+    getCccVendorDashboard({ vendor: dashboardVendor, from_date: fromDate, to_date: toDate, description: dashboardDescription })
+      .then((result) => { if (current) setDashboardData(result); })
+      .catch((reason) => { if (current) setDashboardError(errorText(reason)); })
+      .finally(() => { if (current) setDashboardLoading(false); });
+    return () => { current = false; };
+  }, [activeView, dashboardVendor, dashboardDescription, fromDate, toDate]);
+
+  useEffect(() => {
     if (activeView !== "lowest") return;
     let current = true;
     setLowestLoading(true);
@@ -72,6 +103,29 @@ export default function CccMarketPage() {
       .finally(() => { if (current) setLowestLoading(false); });
     return () => { current = false; };
   }, [activeView, fromDate, toDate]);
+
+  useEffect(() => {
+    if (activeView !== "history" || !historyOem.trim() || !historyVin.trim() || !historyDescription.trim()) {
+      setPriceHistory(null);
+      setHistoryLoading(false);
+      return;
+    }
+    let current = true;
+    setPriceHistory(null);
+    setHistoryLoading(true);
+    setHistoryError("");
+    getCccPriceHistory({
+      oem: historyOem,
+      vin: historyVin,
+      description: historyDescription,
+      from_date: fromDate,
+      to_date: toDate,
+    })
+      .then((result) => { if (current) setPriceHistory(result); })
+      .catch((reason) => { if (current) setHistoryError(errorText(reason)); })
+      .finally(() => { if (current) setHistoryLoading(false); });
+    return () => { current = false; };
+  }, [activeView, historyOem, historyVin, historyDescription, fromDate, toDate]);
 
   useEffect(() => {
     if (!detailSelection) return;
@@ -208,19 +262,27 @@ export default function CccMarketPage() {
   return (
     <section className="content-wrap">
       <div className="page-heading">
-        <div><p className="eyebrow">MARKET / CCC</p><h1>{activeView === "crawls" ? "CCC Market" : "Lowest Price"}</h1><p>{activeView === "crawls" ? "Crawls grouped by OEM, VIN, and crawl date; newest first." : "Compare lowest and lost prices for each vendor and description."}</p></div>
-        <div className="heading-count"><strong>{activeView === "crawls" ? total.toLocaleString() : (lowestSummary?.oem_count ?? 0).toLocaleString()}</strong><span>{activeView === "crawls" ? "crawls" : "OEMs analyzed"}</span></div>
+        <div><p className="eyebrow">MARKET / CCC</p><h1>{activeView === "dashboard" ? "Dashboard" : activeView === "crawls" ? "CCC Market" : activeView === "lowest" ? "Lowest Price" : "Price History"}</h1><p>{activeView === "dashboard" ? "Vendor competitiveness across CCC crawls." : activeView === "crawls" ? "Crawls grouped by OEM, VIN, and crawl date; newest first." : activeView === "lowest" ? "Compare lowest and lost prices for each vendor and description." : "Track vendor prices for an OEM across CCC crawls."}</p></div>
+        <div className="heading-count"><strong>{activeView === "dashboard" ? (dashboardData?.priced_offers ?? 0).toLocaleString() : activeView === "crawls" ? total.toLocaleString() : activeView === "lowest" ? (lowestSummary?.oem_count ?? 0).toLocaleString() : (priceHistory?.vendors.length ?? 0).toLocaleString()}</strong><span>{activeView === "dashboard" ? "priced offers" : activeView === "crawls" ? "crawls" : activeView === "lowest" ? "OEMs analyzed" : "vendors tracked"}</span></div>
       </div>
       <div className="ccc-view-tabs" role="tablist" aria-label="CCC views">
+        <button role="tab" aria-selected={activeView === "dashboard"} className={activeView === "dashboard" ? "active" : ""} onClick={() => setActiveView("dashboard")}>Dashboard</button>
         <button role="tab" aria-selected={activeView === "crawls"} className={activeView === "crawls" ? "active" : ""} onClick={() => setActiveView("crawls")}>Crawl list</button>
         <button role="tab" aria-selected={activeView === "lowest"} className={activeView === "lowest" ? "active" : ""} onClick={() => setActiveView("lowest")}>Lowest Price</button>
+        <button role="tab" aria-selected={activeView === "history"} className={activeView === "history" ? "active" : ""} onClick={() => setActiveView("history")}>Price History</button>
       </div>
-      {activeView === "crawls" ? <div className="ccc-toolbar">
+      {activeView === "dashboard" ? <div className="ccc-toolbar ccc-date-toolbar">
+        <SearchSelect label="Vendor" value={dashboardVendor} options={filters.vendors.map((item) => ({ label: item, value: item }))} placeholder="Search vendors" onChange={setDashboardVendor} className="ccc-filter" />
+        <SearchSelect label="Description" value={dashboardDescription} options={[{ label: "All descriptions", value: "" }, ...filters.descriptions.map((item) => ({ label: item, value: item }))]} placeholder="Search descriptions" onChange={setDashboardDescription} className="ccc-filter" />
+        <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
+        <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>
+        <button className="text-button" onClick={() => { setFromDate(previousMonthDate()); setToDate(localDateString(new Date())); }}>Reset dates</button>
+      </div> : activeView === "crawls" ? <div className="ccc-toolbar">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => updateFilter(setSearch, event.target.value)} placeholder="Search all CCC data" /></label>
-        <label className="ccc-filter">OEM<input list="ccc-oem-options" value={oem} onChange={(event) => updateFilter(setOem, event.target.value)} placeholder="Any OEM" /><datalist id="ccc-oem-options">{filters.oems.map((option) => <option key={option} value={option} />)}</datalist></label>
-        <label className="ccc-filter">VIN<input list="ccc-vin-options" value={vin} onChange={(event) => updateFilter(setVin, event.target.value)} placeholder="Any VIN" /><datalist id="ccc-vin-options">{filters.vins.map((option) => <option key={option} value={option} />)}</datalist></label>
-        <label className="ccc-filter">Description<input list="ccc-description-options" value={description} onChange={(event) => updateFilter(setDescription, event.target.value)} placeholder="Any description" /><datalist id="ccc-description-options">{filters.descriptions.map((option) => <option key={option} value={option} />)}</datalist></label>
-        <label className="ccc-filter">Vendor<input list="ccc-vendor-options" value={vendor} onChange={(event) => updateFilter(setVendor, event.target.value)} placeholder="Any vendor" /><datalist id="ccc-vendor-options">{filters.vendors.map((option) => <option key={option} value={option} />)}</datalist></label>
+        <SearchSelect label="OEM" value={oem} options={filters.oems.map((item) => ({ label: item, value: item }))} placeholder="Any OEM" allowCustom onChange={(value) => updateFilter(setOem, value)} className="ccc-filter" />
+        <SearchSelect label="VIN" value={vin} options={filters.vins.map((item) => ({ label: item, value: item }))} placeholder="Any VIN" allowCustom onChange={(value) => updateFilter(setVin, value)} className="ccc-filter" />
+        <SearchSelect label="Description" value={description} options={filters.descriptions.map((item) => ({ label: item, value: item }))} placeholder="Any description" allowCustom onChange={(value) => updateFilter(setDescription, value)} className="ccc-filter" />
+        <SearchSelect label="Vendor" value={vendor} options={filters.vendors.map((item) => ({ label: item, value: item }))} placeholder="Any vendor" allowCustom onChange={(value) => updateFilter(setVendor, value)} className="ccc-filter" />
         <button className="text-button" onClick={clearFilters}>Clear</button>
         <label className={`outline-button file-button${importing ? " disabled" : ""}`}>
           {importing ? "Importing…" : "↑ Import Excel"}
@@ -228,11 +290,74 @@ export default function CccMarketPage() {
         </label>
         <button className="outline-button" disabled={exportingCrawls} onClick={() => void exportCrawls()}>{exportingCrawls ? "Exporting…" : "↓ Export Excel"}</button>
       </div> : <div className="ccc-toolbar ccc-date-toolbar">
+        {activeView === "history" && <>
+          <SearchSelect label="OEM" value={historyOem} options={filters.oems.map((item) => ({ label: item, value: item }))} placeholder="Select OEM" onChange={setHistoryOem} className="ccc-filter" />
+          <SearchSelect label="VIN" value={historyVin} options={filters.vins.map((item) => ({ label: item, value: item }))} placeholder="Select VIN" onChange={setHistoryVin} className="ccc-filter" />
+          <SearchSelect label="Description" value={historyDescription} options={filters.descriptions.map((item) => ({ label: item, value: item }))} placeholder="Select description" onChange={setHistoryDescription} className="ccc-filter" />
+        </>}
         <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>
         <button className="text-button" onClick={() => { setFromDate(previousMonthDate()); setToDate(localDateString(new Date())); }}>Reset to last month</button>
-        <span className="ccc-date-note">Inclusive range · defaults to the last month</span>
+        {activeView === "lowest" && <span className="ccc-date-note">Inclusive range · defaults to the last month</span>}
       </div>}
+      {activeView === "dashboard" && <>
+        {dashboardError && <div className="alert error-alert" role="alert">{dashboardError}</div>}
+        {dashboardLoading ? <p className="empty-state price-history-empty">Loading vendor performance…</p>
+          : !dashboardVendor ? <p className="empty-state price-history-empty">No vendors are available in the CCC market data.</p>
+            : !dashboardData?.priced_offers ? <p className="empty-state price-history-empty">No priced offers found for this vendor and date range.</p>
+              : <div className="vendor-dashboard-content">
+                <div className="vendor-dashboard-kpis">
+                  <div><span>PRICED OFFERS</span><strong>{dashboardData.priced_offers.toLocaleString()}</strong></div>
+                  <div><span>LOWEST-PRICE WINS</span><strong>{dashboardData.wins.toLocaleString()}</strong></div>
+                  <div><span>LOSSES</span><strong>{dashboardData.losses.toLocaleString()}</strong></div>
+                  <div><span>WIN RATE</span><strong>{dashboardData.win_rate.toFixed(1)}%</strong></div>
+                  <div><span>AVG. GAP FROM LOWEST</span><strong>{formatPrice(dashboardData.average_gap)}</strong></div>
+                </div>
+                <section className="vendor-dashboard-section">
+                  <header><div><h2>Price competitiveness</h2><p>Average vendor price versus average lowest market price by crawl date.</p></div><div className="vendor-dashboard-legend"><span><i className="vendor-price-key" />{dashboardData.vendor}</span><span><i className="market-price-key" />Market low</span></div></header>
+                  {dashboardData.trend.length < 2 ? <p className="vendor-dashboard-empty">At least two crawl dates are needed to draw a trend. Current average: {formatPrice(dashboardData.trend[0]?.average_price ?? "0")}</p>
+                    : <div className="vendor-trend-chart"><svg viewBox="0 0 760 220" role="img" aria-label="Vendor and market-low average prices by crawl date" preserveAspectRatio="none">
+                      {[0, 1, 2, 3].map((line) => <line key={line} x1="48" x2="748" y1={25 + line * 52} y2={25 + line * 52} className="vendor-chart-grid" />)}
+                      <polyline points={trendPoints(dashboardData.trend.map((item) => Number(item.average_lowest_price)), dashboardData.trend)} className="vendor-chart-market" />
+                      <polyline points={trendPoints(dashboardData.trend.map((item) => Number(item.average_price)), dashboardData.trend)} className="vendor-chart-price" />
+                      {dashboardData.trend.map((item, index) => <g key={item.date}>
+                        <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_lowest_price), dashboardData.trend)} r="3" className="vendor-chart-market-dot" />
+                        <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_price), dashboardData.trend)} r="3" className="vendor-chart-price-dot" />
+                      </g>)}
+                    </svg><div className="vendor-chart-dates"><span>{dashboardData.trend[0].date}</span><span>{dashboardData.trend[dashboardData.trend.length - 1].date}</span></div></div>}
+                </section>
+                <section className="vendor-dashboard-section">
+                  <header><div><h2>Description performance</h2><p>Wins and losses for this vendor in the selected date range.</p></div></header>
+                  <div className="vendor-dashboard-table-scroll"><table><thead><tr><th>DESCRIPTION</th><th>WINS</th><th>LOSSES</th><th>OPPORTUNITIES</th><th>WIN RATE</th></tr></thead><tbody>{dashboardData.descriptions.map((item) => <tr key={item.description}><td>{item.description}</td><td className="dashboard-win">{item.wins.toLocaleString()}</td><td className="dashboard-loss">{item.losses.toLocaleString()}</td><td>{item.opportunities.toLocaleString()}</td><td>{item.win_rate.toFixed(1)}%</td></tr>)}</tbody></table></div>
+                </section>
+                <section className="vendor-dashboard-section">
+                  <header><div><h2>Recent crawl details</h2><p>{dashboardData.details.length.toLocaleString()} shown of {dashboardData.details_total.toLocaleString()} priced offers</p></div></header>
+                  <div className="vendor-dashboard-table-scroll vendor-dashboard-details"><table><thead><tr><th>CRAWL DATE</th><th>OEM</th><th>VIN</th><th>DESCRIPTION</th><th>VENDOR PRICE</th><th>LOWEST VENDOR</th><th>LOWEST PRICE</th><th>PREVIOUS CRAWL</th><th>PREVIOUS LOWEST VENDOR</th><th>PREVIOUS LOWEST PRICE</th><th>RESULT</th></tr></thead><tbody>{dashboardData.details.map((item, index) => <tr key={`${item.oem}-${item.vin}-${item.description}-${item.crawl_date}-${index}`}><td>{new Date(item.crawl_date).toLocaleString()}</td><td>{item.oem}</td><td className="vin-cell">{item.vin}</td><td>{item.description}</td><td>{formatPrice(item.price)}</td><td>{item.lowest_vendors}</td><td>{formatPrice(item.lowest_price)}</td><td>{item.previous_crawl_date ? new Date(item.previous_crawl_date).toLocaleString() : "—"}</td><td>{item.previous_lowest_vendors || "—"}</td><td>{item.previous_lowest_price ? formatPrice(item.previous_lowest_price) : "—"}</td><td className={item.outcome === "won" ? "dashboard-win" : "dashboard-loss"}>{item.outcome === "won" ? "Won" : "Lost"}</td></tr>)}</tbody></table></div>
+                </section>
+              </div>}
+      </>}
+      {activeView === "history" && <>
+        {historyError && <div className="alert error-alert" role="alert">{historyError}</div>}
+        {!historyOem.trim() || !historyVin.trim() || !historyDescription.trim()
+          ? <p className="empty-state price-history-empty">Select an OEM, VIN, and description to view vendor price history.</p>
+          : historyLoading ? <p className="empty-state price-history-empty">Loading price history…</p>
+            : !priceHistory?.vendors.length ? <p className="empty-state price-history-empty">No priced offers found for this OEM, VIN, description, and date range.</p>
+              : <div className="price-history-content">
+                <div className="price-history-summary">
+                  <span>{priceHistory.oem} · {priceHistory.vin}</span>
+                  <strong>{priceHistory.description}</strong>
+                  <small>{priceHistory.vendors.length} vendors · {fromDate} to {toDate}</small>
+                </div>
+                {priceHistory.vendors.map((entry) => {
+                  const latest = entry.observations[entry.observations.length - 1];
+                  const previous = entry.observations[entry.observations.length - 2];
+                  return <section className="price-history-vendor" key={entry.vendor}>
+                    <header><h2>{entry.vendor}</h2><div><span>Latest <strong>{latest ? formatPrice(latest.price) : "—"}</strong></span><span>Change <strong className={latest?.change && Number(latest.change) > 0 ? "price-up" : latest?.change && Number(latest.change) < 0 ? "price-down" : ""}>{latest?.change ? formatPriceChange(latest.change) : "No previous crawl"}</strong></span><span>Previous → latest <strong>{previous ? formatPrice(previous.price) : "No previous crawl"} → {latest ? formatPrice(latest.price) : "—"}</strong></span></div></header>
+                    <div className="price-history-table-frame"><table><thead><tr><th>CRAWL DATE</th><th>PRICE</th><th>PREVIOUS</th><th>CHANGE</th></tr></thead><tbody>{[...entry.observations].reverse().map((observation) => <tr key={observation.crawl_date}><td>{new Date(observation.crawl_date).toLocaleString()}</td><td>{formatPrice(observation.price)}</td><td>{observation.previous_price ? formatPrice(observation.previous_price) : "—"}</td><td className={observation.change && Number(observation.change) > 0 ? "price-up" : observation.change && Number(observation.change) < 0 ? "price-down" : ""}>{observation.change ? formatPriceChange(observation.change) : "—"}</td></tr>)}</tbody></table></div>
+                  </section>;
+                })}
+              </div>}
+      </>}
       {activeView === "lowest" && <>
         {lowestError && <div className="alert error-alert" role="alert">{lowestError}</div>}
         <div className="lowest-summary-strip">
@@ -240,10 +365,13 @@ export default function CccMarketPage() {
           <div><strong>{lowestSummary?.lowest_count ?? 0}</strong><span>lowest-price crawl wins</span></div>
           <div><strong>{lowestSummary?.lost_count ?? 0}</strong><span>vendor crawl losses</span></div>
         </div>
-        <div className="lowest-price-table-wrap">
+        <div className="lowest-vendor-list">
           {lowestLoading ? <p className="empty-state lowest-empty">Calculating lowest offers…</p>
             : !lowestSummary?.vendors.length ? <p className="empty-state lowest-empty">No priced offers found in this date range.</p>
-              : <table className="lowest-price-table"><colgroup><col className="lowest-label-column" /><col /><col /><col /><col /></colgroup><thead><tr><th>VENDOR / DESCRIPTION</th><th>OEMs WON</th><th>CRAWL WINS</th><th>OEMs LOST</th><th>CRAWL LOSSES</th></tr></thead><tbody>{lowestSummary.vendors.map((item) => <Fragment key={item.vendor}><tr className="lowest-vendor-row"><th>{item.vendor}</th><td><span className="lowest-metric-value">{item.won_oem_count.toLocaleString()}</span></td><td><span className="lowest-metric-value">{item.lowest_count.toLocaleString()}</span></td><td><span className="lowest-metric-value lost-count">{item.lost_oem_count.toLocaleString()}</span></td><td><span className="lowest-metric-value lost-count">{item.lost_count.toLocaleString()}</span></td></tr>{item.descriptions.map((entry) => <tr className="lowest-description-row" key={`${item.vendor}-${entry.description}`}><td><span>{entry.description}</span></td><td><button className="lowest-count-button won-count" onClick={() => showLowestDetails(item.vendor, entry.description, "won", "oem")}>{entry.won_oem_count.toLocaleString()}</button></td><td><button className="lowest-count-button won-count" onClick={() => showLowestDetails(item.vendor, entry.description, "won", "crawl")}>{entry.won_count.toLocaleString()}</button></td><td><button className="lowest-count-button lost-count" onClick={() => showLowestDetails(item.vendor, entry.description, "lost", "oem")}>{entry.lost_oem_count.toLocaleString()}</button></td><td><button className="lowest-count-button lost-count" onClick={() => showLowestDetails(item.vendor, entry.description, "lost", "crawl")}>{entry.lost_count.toLocaleString()}</button></td></tr>)}</Fragment>)}</tbody></table>}
+              : lowestSummary.vendors.map((item) => <section className="lowest-vendor-panel" key={item.vendor}>
+                <header className="lowest-vendor-panel-header"><h2>{item.vendor}</h2><div><span>OEMs won <strong>{item.won_oem_count.toLocaleString()}</strong></span><span>Crawl wins <strong>{item.lowest_count.toLocaleString()}</strong></span><span>OEMs lost <strong>{item.lost_oem_count.toLocaleString()}</strong></span><span>Crawl losses <strong>{item.lost_count.toLocaleString()}</strong></span></div></header>
+                <div className="lowest-vendor-description-scroll"><table className="lowest-vendor-description-table"><thead><tr><th>DESCRIPTION</th><th>OEMs WON</th><th>CRAWL WINS</th><th>OEMs LOST</th><th>CRAWL LOSSES</th></tr></thead><tbody>{item.descriptions.map((entry) => <tr key={`${item.vendor}-${entry.description}`}><td>{entry.description}</td><td><button className="lowest-count-button won-count" onClick={() => showLowestDetails(item.vendor, entry.description, "won", "oem")}>{entry.won_oem_count.toLocaleString()}</button></td><td><button className="lowest-count-button won-count" onClick={() => showLowestDetails(item.vendor, entry.description, "won", "crawl")}>{entry.won_count.toLocaleString()}</button></td><td><button className="lowest-count-button lost-count" onClick={() => showLowestDetails(item.vendor, entry.description, "lost", "oem")}>{entry.lost_oem_count.toLocaleString()}</button></td><td><button className="lowest-count-button lost-count" onClick={() => showLowestDetails(item.vendor, entry.description, "lost", "crawl")}>{entry.lost_count.toLocaleString()}</button></td></tr>)}</tbody></table></div>
+              </section>)}
         </div>
       </>}
       {error && <div className="alert error-alert" role="alert">{error}</div>}
@@ -278,7 +406,7 @@ export default function CccMarketPage() {
           <header><div><p className="eyebrow">LOWEST PRICE / OEM DETAILS</p><h2 id="lowest-detail-title">{detailSelection.outcome === "won" ? "Won lowest price" : "Lost lowest price"}</h2><p>{detailSelection.vendor} · {detailSelection.description} · {fromDate} to {toDate}</p></div><button className="close-button" onClick={() => setDetailSelection(null)} aria-label="Close OEM details">×</button></header>
           <div className="lowest-detail-actions"><span>{detailsLoading ? "Loading OEM records…" : `${lowestDetails.length} related record${lowestDetails.length === 1 ? "" : "s"}`}</span><button className="outline-button" disabled={detailsLoading || lowestDetails.length === 0 || exportingDetails} onClick={() => void exportLowestDetails()}>{exportingDetails ? "Exporting…" : "↓ Export Excel"}</button></div>
           {detailsError && <div className="alert error-alert" role="alert">{detailsError}</div>}
-          <div className="ccc-offers-table-frame"><table><thead><tr><th>OEM PART</th><th>VIN</th><th>CRAWL DATE</th><th>VENDOR</th><th>PRICE</th><th>{detailSelection.outcome === "won" ? "SECOND-LOWEST VENDOR" : "LOWEST VENDOR"}</th><th>{detailSelection.outcome === "won" ? "SECOND-LOWEST PRICE" : "LOWEST PRICE"}</th><th>RESULT</th>{detailSelection.metric === "oem" && <th>CRAWLS</th>}</tr></thead><tbody>{lowestDetails.map((row, index) => <tr key={`${row.oem}-${row.vin}-${row.crawl_date}-${index}`}><td>{row.oem}</td><td className="vin-cell">{row.vin}</td><td>{new Date(row.crawl_date).toLocaleString()}</td><td>{row.vendor}</td><td>{row.price}</td><td>{detailSelection.outcome === "won" ? row.second_lowest_vendors || "No higher-priced vendor" : row.lowest_vendors}</td><td>{detailSelection.outcome === "won" ? row.second_lowest_price ?? "N/A" : row.lowest_price}</td><td>{row.outcome === "won" ? "Lowest" : "Higher"}</td>{detailSelection.metric === "oem" && <td>{row.crawl_count ?? 1}</td>}</tr>)}{!detailsLoading && !lowestDetails.length && <tr><td className="empty-state" colSpan={detailSelection.metric === "oem" ? 9 : 8}>No related OEM records.</td></tr>}</tbody></table></div>
+          <div className="ccc-offers-table-frame"><table><thead><tr><th>OEM PART</th><th>VIN</th><th>CRAWL DATE</th><th>VENDOR</th><th>PRICE</th><th>{detailSelection.outcome === "won" ? "SECOND-LOWEST VENDOR" : "LOWEST VENDOR"}</th><th>{detailSelection.outcome === "won" ? "SECOND-LOWEST PRICE" : "LOWEST PRICE"}</th><th>PREVIOUS CRAWL</th><th>PREVIOUS LOWEST VENDOR</th><th>PREVIOUS LOWEST PRICE</th><th>RESULT</th>{detailSelection.metric === "oem" && <th>CRAWLS</th>}</tr></thead><tbody>{lowestDetails.map((row, index) => <tr key={`${row.oem}-${row.vin}-${row.crawl_date}-${index}`}><td>{row.oem}</td><td className="vin-cell">{row.vin}</td><td>{new Date(row.crawl_date).toLocaleString()}</td><td>{row.vendor}</td><td>{formatPrice(row.price)}</td><td>{detailSelection.outcome === "won" ? row.second_lowest_vendors || "No higher-priced vendor" : row.lowest_vendors}</td><td>{detailSelection.outcome === "won" ? row.second_lowest_price ? formatPrice(row.second_lowest_price) : "N/A" : formatPrice(row.lowest_price)}</td><td>{row.previous_crawl_date ? new Date(row.previous_crawl_date).toLocaleString() : "No previous crawl"}</td><td>{row.previous_lowest_vendors || "—"}</td><td>{row.previous_lowest_price ? formatPrice(row.previous_lowest_price) : "—"}</td><td>{row.outcome === "won" ? "Lowest" : "Higher"}</td>{detailSelection.metric === "oem" && <td>{row.crawl_count ?? 1}</td>}</tr>)}{!detailsLoading && !lowestDetails.length && <tr><td className="empty-state" colSpan={detailSelection.metric === "oem" ? 12 : 11}>No related OEM records.</td></tr>}</tbody></table></div>
         </section>
       </div>}
     </section>
@@ -288,6 +416,32 @@ export default function CccMarketPage() {
 function displayOfferValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "";
   return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+function formatPrice(value: string): string {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" }) : value;
+}
+
+function formatPriceChange(value: string): string {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return value;
+  return `${amount > 0 ? "+" : ""}${amount.toLocaleString(undefined, { style: "currency", currency: "USD" })}`;
+}
+
+function trendX(index: number, count: number): number {
+  return count < 2 ? 398 : 48 + index * 700 / (count - 1);
+}
+
+function trendY(value: number, trend: CccVendorDashboard["trend"]): number {
+  const prices = trend.flatMap((item) => [Number(item.average_price), Number(item.average_lowest_price)]);
+  const minimum = Math.min(...prices);
+  const maximum = Math.max(...prices);
+  return maximum === minimum ? 105 : 185 - (value - minimum) / (maximum - minimum) * 160;
+}
+
+function trendPoints(values: number[], trend: CccVendorDashboard["trend"]): string {
+  return values.map((value, index) => `${trendX(index, values.length)},${trendY(value, trend)}`).join(" ");
 }
 
 function sortableOfferValue(value: unknown): number | string {

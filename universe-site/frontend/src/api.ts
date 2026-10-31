@@ -77,6 +77,54 @@ export interface CccMarketOffer {
   market_data: Record<string, unknown>;
 }
 
+export interface CccPriceObservation {
+  crawl_date: string;
+  price: string;
+  previous_price: string | null;
+  change: string | null;
+}
+
+export interface CccVendorPriceHistory {
+  vendor: string;
+  observations: CccPriceObservation[];
+}
+
+export interface CccPriceHistory {
+  oem: string;
+  vin: string;
+  description: string;
+  vendors: CccVendorPriceHistory[];
+}
+
+export interface CccVendorDashboard {
+  vendor: string;
+  from_date: string | null;
+  to_date: string | null;
+  priced_offers: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  average_gap: string;
+  trend: { date: string; average_price: string; average_lowest_price: string; offers: number }[];
+  descriptions: { description: string; wins: number; losses: number; opportunities: number; win_rate: number }[];
+  details: {
+    oem: string;
+    vin: string;
+    description: string;
+    crawl_date: string;
+    price: string;
+    lowest_vendors: string;
+    lowest_price: string;
+    gap: string;
+    outcome: "won" | "lost";
+    previous_crawl_date: string | null;
+    previous_vendor_price: string | null;
+    previous_lowest_vendors: string;
+    previous_lowest_price: string | null;
+  }[];
+  details_total: number;
+}
+
 export interface CccMarketFilters {
   oems: string[];
   vins: string[];
@@ -112,6 +160,9 @@ export interface CccLowestPriceDetail {
   oem: string;
   vin: string;
   crawl_date: string;
+  previous_crawl_date: string | null;
+  previous_lowest_vendors: string;
+  previous_lowest_price: string | null;
   vendor: string;
   description: string;
   price: string;
@@ -184,6 +235,25 @@ export async function getCccMarketFilters() {
 
 export async function getCccMarketOffers(group: Pick<CccMarketRecord, "oem" | "vin" | "crawl_date">) {
   return (await client.get<CccMarketOffer[]>("/api/universe/market/ccc/offers", { params: group })).data;
+}
+
+export async function getCccPriceHistory(params: {
+  oem: string;
+  vin: string;
+  description: string;
+  from_date: string;
+  to_date: string;
+}) {
+  return (await client.get<CccPriceHistory>("/api/universe/market/ccc/price-history", { params })).data;
+}
+
+export async function getCccVendorDashboard(params: {
+  vendor: string;
+  from_date: string;
+  to_date: string;
+  description: string;
+}) {
+  return (await client.get<CccVendorDashboard>("/api/universe/market/ccc/vendor-dashboard", { params })).data;
 }
 
 export async function getCccLowestPriceSummary(fromDate = "", toDate = "") {
