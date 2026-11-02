@@ -2,31 +2,31 @@
     {
         "Name":  "Portal API",
         "Port":  8001,
-        "ProcessId":  41788
+        "ProcessId":  40216
     },
     {
         "Name":  "Scraper API",
         "Port":  8000,
-        "ProcessId":  31688
+        "ProcessId":  22016
     },
     {
         "Name":  "Universe API",
         "Port":  8002,
-        "ProcessId":  39532
+        "ProcessId":  6164
     },
     {
         "Name":  "Scraper UI",
         "Port":  5173,
-        "ProcessId":  44232
+        "ProcessId":  5468
     },
     {
         "Name":  "Portal UI",
         "Port":  5174,
-        "ProcessId":  29888
+        "ProcessId":  20408
     },
     {
         "Name":  "Universe UI",
         "Port":  5175,
-        "ProcessId":  31664
+        "ProcessId":  43672
     }
 ]

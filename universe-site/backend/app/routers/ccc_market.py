@@ -1,5 +1,6 @@
 import json
 import math
+import re
 from bisect import bisect_left
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -245,10 +246,11 @@ def export_ccc_market_records(
     workbook.save(stream)
     workbook.close()
     stream.seek(0)
+    filename = f"ccc-{search}.xlsx"
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="ccc-crawls.xlsx"'},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
@@ -523,7 +525,7 @@ def ccc_vendor_dashboard(
         if row["vendor"].casefold() == vendor.strip().casefold()
         and (not description.strip() or row["description"].casefold() == description.strip().casefold())
     ]
-    detail_rows = sorted(rows, key=lambda item: (item["crawl_date"], item["oem"], item["vin"]), reverse=True)[:250]
+    detail_rows = sorted(rows, key=lambda item: (item["crawl_date"], item["oem"], item["vin"]), reverse=True)
     detail_keys = {
         (row["oem"], row["vin"], row["description"].casefold(), row["crawl_date"])
         for row in detail_rows
@@ -674,6 +676,34 @@ def ccc_vendor_dashboard(
         "details": details,
         "details_total": len(rows),
     }
+
+
+@router.get("/vendor-dashboard/export")
+def export_ccc_vendor_dashboard(vendor: str = Query(..., min_length=1), from_date: date | None = None, to_date: date | None = None, description: str = "", db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
+    dashboard = ccc_vendor_dashboard(vendor, from_date, to_date, description, db, _=user)
+    workbook = Workbook(write_only=True)
+    summary = workbook.create_sheet("Summary")
+    summary.append(["Vendor", "From Date", "To Date", "Description", "Priced Offers", "Lowest-Price Wins", "Losses", "Win Rate", "Average Gap From Lowest"])
+    summary.append([dashboard["vendor"], dashboard["from_date"], dashboard["to_date"], description or "All descriptions", dashboard["priced_offers"], dashboard["wins"], dashboard["losses"], dashboard["win_rate"], dashboard["average_gap"]])
+    trend = workbook.create_sheet("Price Trend")
+    trend.append(["Crawl Date", "Vendor Average Price", "Market Lowest Average Price", "Offers"])
+    for item in dashboard["trend"]:
+        trend.append([item["date"], item["average_price"], item["average_lowest_price"], item["offers"]])
+    performance = workbook.create_sheet("Description Performance")
+    performance.append(["Description", "Wins", "Losses", "Opportunities", "Win Rate"])
+    for item in dashboard["descriptions"]:
+        performance.append([item["description"], item["wins"], item["losses"], item["opportunities"], item["win_rate"]])
+    details = workbook.create_sheet("Recent Crawl Details")
+    details.append(["Crawl Date", "OEM", "VIN", "Description", "Vendor Price", "Lowest Vendor", "Lowest Price", "Gap", "Previous Crawl", "Previous Vendor Price", "Previous Lowest Vendor", "Previous Lowest Price", "Result"])
+    for item in dashboard["details"]:
+        details.append([item["crawl_date"], item["oem"], item["vin"], item["description"], item["price"], item["lowest_vendors"], item["lowest_price"], item["gap"], item["previous_crawl_date"], item["previous_vendor_price"], item["previous_lowest_vendors"], item["previous_lowest_price"], item["outcome"]])
+    log_activity(db, user, "export_ccc_vendor_dashboard", f"exported CCC dashboard for {vendor.strip()}")
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    stream.seek(0)
+    safe_vendor = re.sub(r"[^A-Za-z0-9_-]+", "-", vendor.strip()).strip("-") or "vendor"
+    return StreamingResponse(stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=ccc-dashboard-{safe_vendor}.xlsx"})
 
 
 @router.get("/lowest-price")
@@ -840,11 +870,11 @@ def export_ccc_lowest_price_details(
     workbook.save(stream)
     workbook.close()
     stream.seek(0)
-    filename = f"ccc-{outcome}-{metric}-details.xlsx"
+    safe_vendor = re.sub(r"[^A-Za-z0-9_-]+", "-", vendor.strip()).strip("-") or "vendor"
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f"attachment; filename=ccc-{outcome}-{metric}-details.xlsx"},
     )
 
 

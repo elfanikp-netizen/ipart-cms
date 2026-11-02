@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "./lowest-price.css";
-import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
+import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, exportCccVendorDashboard, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
 import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord, CccPriceHistory, CccVendorDashboard } from "../api";
 import SearchSelect from "../components/SearchSelect";
 
@@ -60,6 +60,7 @@ export default function CccMarketPage() {
   const [dashboardData, setDashboardData] = useState<CccVendorDashboard | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState("");
+  const [exportingDashboard, setExportingDashboard] = useState(false);
   const [detailSelection, setDetailSelection] = useState<{ vendor: string; description: string; outcome: "won" | "lost"; metric: "oem" | "crawl" } | null>(null);
   const [lowestDetails, setLowestDetails] = useState<CccLowestPriceDetail[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -240,6 +241,24 @@ export default function CccMarketPage() {
     }
   };
 
+  const exportDashboard = async () => {
+    if (!dashboardVendor || !dashboardData) return;
+    setExportingDashboard(true);
+    setDashboardError("");
+    try {
+      await exportCccVendorDashboard({
+        vendor: dashboardVendor,
+        from_date: fromDate,
+        to_date: toDate,
+        description: dashboardDescription,
+      });
+    } catch (reason) {
+      setDashboardError(errorText(reason));
+    } finally {
+      setExportingDashboard(false);
+    }
+  };
+
   const offerColumns = [...new Set(offers.flatMap((offer) => Object.keys(offer.market_data)))];
   const visibleOffers = offers.filter((offer) => offerColumns.every((column) => {
     const filter = (columnSearch[column] ?? "").trim().toLocaleLowerCase();
@@ -300,6 +319,7 @@ export default function CccMarketPage() {
         <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>
         <button className="text-button" onClick={() => { setFromDate(previousMonthDate()); setToDate(localDateString(new Date())); }}>Reset dates</button>
+        <button className="outline-button" disabled={!dashboardData || !dashboardVendor || exportingDashboard} onClick={() => void exportDashboard()}>{exportingDashboard ? "Exporting…" : "↓ Export Excel"}</button>
       </div> : activeView === "crawls" ? <div className="ccc-toolbar">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => updateFilter(setSearch, event.target.value)} placeholder="Search all CCC data" /></label>
         <SearchSelect label="OEM" value={oem} options={filters.oems.map((item) => ({ label: item, value: item }))} placeholder="Any OEM" allowCustom onChange={(value) => updateFilter(setOem, value)} className="ccc-filter" />

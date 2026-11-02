@@ -433,3 +433,13 @@ export async function saveOem(id: number | null, values: OemValues) {
 export async function deleteOem(id: number) {
   await client.delete(`/api/universe/oems/${id}`);
 }
+
+export async function exportCccVendorDashboard(params: {
+  vendor: string;
+  from_date: string;
+  to_date: string;
+  description: string;
+}) {
+  const response = await client.get<Blob>("/api/universe/market/ccc/vendor-dashboard/export", { params, responseType: "blob" });
+  saveBlob(response.data, `ccc-dashboard-${params.vendor.trim().replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "vendor"}.xlsx`);
+}
