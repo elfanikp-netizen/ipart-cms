@@ -105,6 +105,12 @@ export interface CccVendorDashboard {
   losses: number;
   win_rate: number;
   average_gap: string;
+  average_vendor_price: string;
+  average_market_low: string;
+  oem_count: number;
+  vin_count: number;
+  crawl_count: number;
+  opportunity_count: number;
   trend: { date: string; average_price: string; average_lowest_price: string; offers: number }[];
   descriptions: { description: string; wins: number; losses: number; opportunities: number; win_rate: number }[];
   details: {

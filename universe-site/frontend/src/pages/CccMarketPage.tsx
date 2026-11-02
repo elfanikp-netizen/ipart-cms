@@ -349,32 +349,47 @@ export default function CccMarketPage() {
           : !dashboardVendor ? <p className="empty-state price-history-empty">No vendors are available in the CCC market data.</p>
             : !dashboardData?.priced_offers ? <p className="empty-state price-history-empty">No priced offers found for this vendor and date range.</p>
               : <div className="vendor-dashboard-content">
-                <div className="vendor-dashboard-kpis">
-                  <div><span>PRICED OFFERS</span><strong>{dashboardData.priced_offers.toLocaleString()}</strong></div>
-                  <div><span>LOWEST-PRICE WINS</span><strong>{dashboardData.wins.toLocaleString()}</strong></div>
-                  <div><span>LOSSES</span><strong>{dashboardData.losses.toLocaleString()}</strong></div>
-                  <div><span>WIN RATE</span><strong>{dashboardData.win_rate.toFixed(1)}%</strong></div>
-                  <div><span>AVG. GAP FROM LOWEST</span><strong>{formatPrice(dashboardData.average_gap)}</strong></div>
+                <div className="vendor-dashboard-overview">
+                  <div><p className="eyebrow">PERFORMANCE OVERVIEW</p><h2>{dashboardData.vendor}</h2><p>{dashboardDescription || "All descriptions"} · {dashboardData.crawl_count.toLocaleString()} crawls</p></div>
+                  <div className="vendor-performance-bar" aria-label={`${dashboardData.wins} wins and ${dashboardData.losses} losses`}>
+                    <span className="vendor-performance-win" style={{ width: `${dashboardData.win_rate}%` }} />
+                    <span className="vendor-performance-loss" style={{ width: `${100 - dashboardData.win_rate}%` }} />
+                  </div>
+                  <div className="vendor-performance-caption"><span><i className="vendor-win-dot" />Wins {dashboardData.wins.toLocaleString()}</span><span><i className="vendor-loss-dot" />Losses {dashboardData.losses.toLocaleString()}</span></div>
                 </div>
                 <section className="vendor-dashboard-section">
                   <header><div><h2>Price competitiveness</h2><p>Average vendor price versus average lowest market price by crawl date.</p></div><div className="vendor-dashboard-legend"><span><i className="vendor-price-key" />{dashboardData.vendor}</span><span><i className="market-price-key" />Market low</span></div></header>
                   {dashboardData.trend.length < 2 ? <p className="vendor-dashboard-empty">At least two crawl dates are needed to draw a trend. Current average: {formatPrice(dashboardData.trend[0]?.average_price ?? "0")}</p>
-                    : <div className="vendor-trend-chart"><svg viewBox="0 0 760 220" role="img" aria-label="Vendor and market-low average prices by crawl date" preserveAspectRatio="none">
-                      {[0, 1, 2, 3].map((line) => <line key={line} x1="48" x2="748" y1={25 + line * 52} y2={25 + line * 52} className="vendor-chart-grid" />)}
-                      <polyline points={trendPoints(dashboardData.trend.map((item) => Number(item.average_lowest_price)), dashboardData.trend)} className="vendor-chart-market" />
-                      <polyline points={trendPoints(dashboardData.trend.map((item) => Number(item.average_price)), dashboardData.trend)} className="vendor-chart-price" />
-                      {dashboardData.trend.map((item, index) => <g key={item.date}>
-                        <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_lowest_price), dashboardData.trend)} r="3" className="vendor-chart-market-dot" />
-                        <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_price), dashboardData.trend)} r="3" className="vendor-chart-price-dot" />
-                      </g>)}
-                    </svg><div className="vendor-chart-dates"><span>{dashboardData.trend[0].date}</span><span>{dashboardData.trend[dashboardData.trend.length - 1].date}</span></div></div>}
+                    : <div className="vendor-trend-chart">
+                      <div className="vendor-chart-summary">
+                        <div><span>Latest vendor avg.</span><strong>{formatPrice(dashboardData.trend[dashboardData.trend.length - 1]?.average_price ?? "0")}</strong></div>
+                        <div><span>Latest market low</span><strong>{formatPrice(dashboardData.trend[dashboardData.trend.length - 1]?.average_lowest_price ?? "0")}</strong></div>
+                        <div><span>Latest gap</span><strong>{formatPrice(String(Math.max(0, Number(dashboardData.trend[dashboardData.trend.length - 1]?.average_price ?? 0) - Number(dashboardData.trend[dashboardData.trend.length - 1]?.average_lowest_price ?? 0))))}</strong></div>
+                      </div>
+                      <svg viewBox="0 0 760 260" role="img" aria-label="Vendor and market-low average prices by crawl date" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                          <linearGradient id="vendorPriceFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#27765b" stopOpacity="0.22" /><stop offset="100%" stopColor="#27765b" stopOpacity="0" /></linearGradient>
+                        </defs>
+                        {trendGridLines(dashboardData.trend).map((line) => <g key={line.y}><line x1="58" x2="738" y1={line.y} y2={line.y} className="vendor-chart-grid" /><text x="48" y={line.y + 4} textAnchor="end" className="vendor-chart-axis-label">${line.value.toFixed(0)}</text></g>)}
+                        <polygon points={`${trendAreaPoints(dashboardData.trend.map((item) => Number(item.average_price)), dashboardData.trend)} 738,214 58,214`} fill="url(#vendorPriceFill)" />
+                        <polyline points={trendSmoothPoints(dashboardData.trend.map((item) => Number(item.average_lowest_price)), dashboardData.trend)} className="vendor-chart-market" />
+                        <polyline points={trendSmoothPoints(dashboardData.trend.map((item) => Number(item.average_price)), dashboardData.trend)} className="vendor-chart-price" />
+                        {dashboardData.trend.map((item, index) => <g key={item.date} className="vendor-chart-point">
+                          <line x1={trendX(index, dashboardData.trend.length)} x2={trendX(index, dashboardData.trend.length)} y1="32" y2="214" className="vendor-chart-hover-line" />
+                          <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_lowest_price), dashboardData.trend)} r="4" className="vendor-chart-market-dot" />
+                          <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_price), dashboardData.trend)} r="4" className="vendor-chart-price-dot" />
+                          <text x={trendX(index, dashboardData.trend.length)} y="238" textAnchor="middle" className="vendor-chart-date-label">{new Date(`${item.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</text>
+                          <title>{item.date} · {item.offers} offers · {dashboardData.vendor}: {formatPrice(item.average_price)} · Market low: {formatPrice(item.average_lowest_price)}</title>
+                        </g>)}
+                      </svg>
+                    </div>}
                 </section>
                 <section className="vendor-dashboard-section">
                   <header><div><h2>Description performance</h2><p>Wins and losses for this vendor in the selected date range.</p></div></header>
                   <div className="vendor-dashboard-table-scroll"><table><thead><tr><th>DESCRIPTION</th><th>WINS</th><th>LOSSES</th><th>OPPORTUNITIES</th><th>WIN RATE</th></tr></thead><tbody>{dashboardData.descriptions.map((item) => <tr key={item.description}><td>{item.description}</td><td className="dashboard-win">{item.wins.toLocaleString()}</td><td className="dashboard-loss">{item.losses.toLocaleString()}</td><td>{item.opportunities.toLocaleString()}</td><td>{item.win_rate.toFixed(1)}%</td></tr>)}</tbody></table></div>
                 </section>
                 <section className="vendor-dashboard-section">
-                  <header><div><h2>Recent crawl details</h2><p>{dashboardData.details.length.toLocaleString()} shown of {dashboardData.details_total.toLocaleString()} priced offers</p></div></header>
+                  <header><div><h2>Recent crawl details</h2><p>Latest {dashboardData.details.length.toLocaleString()} of {dashboardData.details_total.toLocaleString()} priced offers</p></div></header>
                   <div className="vendor-dashboard-table-scroll vendor-dashboard-details"><table><thead><tr><th>CRAWL DATE</th><th>OEM</th><th>VIN</th><th>DESCRIPTION</th><th>VENDOR PRICE</th><th>LOWEST VENDOR</th><th>LOWEST PRICE</th><th>PREVIOUS CRAWL</th><th>PREVIOUS LOWEST VENDOR</th><th>PREVIOUS LOWEST PRICE</th><th>RESULT</th></tr></thead><tbody>{dashboardData.details.map((item, index) => <tr key={`${item.oem}-${item.vin}-${item.description}-${item.crawl_date}-${index}`}><td>{new Date(item.crawl_date).toLocaleString()}</td><td>{item.oem}</td><td className="vin-cell">{item.vin}</td><td>{item.description}</td><td>{formatPrice(item.price)}</td><td>{item.lowest_vendors}</td><td>{formatPrice(item.lowest_price)}</td><td>{item.previous_crawl_date ? new Date(item.previous_crawl_date).toLocaleString() : "—"}</td><td>{item.previous_lowest_vendors || "—"}</td><td>{item.previous_lowest_price ? formatPrice(item.previous_lowest_price) : "—"}</td><td className={item.outcome === "won" ? "dashboard-win" : "dashboard-loss"}>{item.outcome === "won" ? "Won" : "Lost"}</td></tr>)}</tbody></table></div>
                 </section>
               </div>}
@@ -480,7 +495,10 @@ function trendY(value: number, trend: CccVendorDashboard["trend"]): number {
   const prices = trend.flatMap((item) => [Number(item.average_price), Number(item.average_lowest_price)]);
   const minimum = Math.min(...prices);
   const maximum = Math.max(...prices);
-  return maximum === minimum ? 105 : 185 - (value - minimum) / (maximum - minimum) * 160;
+  const padding = maximum === minimum ? maximum * 0.05 || 1 : (maximum - minimum) * 0.12;
+  const low = minimum - padding;
+  const high = maximum + padding;
+  return high === low ? 123 : 214 - (value - low) / (high - low) * 182;
 }
 
 function trendPoints(values: number[], trend: CccVendorDashboard["trend"]): string {
@@ -491,4 +509,25 @@ function sortableOfferValue(value: unknown): number | string {
   const rendered = displayOfferValue(value).replace(/[$,]/g, "").trim();
   if (rendered && /^[-+]?(?:\d+\.?\d*|\.\d+)$/.test(rendered)) return Number(rendered);
   return rendered;
+}
+
+function trendGridLines(trend: CccVendorDashboard["trend"]): { y: number; value: number }[] {
+  const prices = trend.flatMap((item) => [Number(item.average_price), Number(item.average_lowest_price)]);
+  const minimum = Math.min(...prices);
+  const maximum = Math.max(...prices);
+  const padding = maximum === minimum ? maximum * 0.05 || 1 : (maximum - minimum) * 0.12;
+  const low = minimum - padding;
+  const high = maximum + padding;
+  return [0, 1, 2, 3, 4].map((index) => ({
+    y: 214 - index * 45.5,
+    value: low + (high - low) * index / 4,
+  }));
+}
+
+function trendAreaPoints(values: number[], trend: CccVendorDashboard["trend"]): string {
+  return values.map((value, index) => `${trendX(index, values.length)},${trendY(value, trend)}`).join(" ");
+}
+
+function trendSmoothPoints(values: number[], trend: CccVendorDashboard["trend"]): string {
+  return trendAreaPoints(values, trend);
 }

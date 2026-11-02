@@ -514,6 +514,17 @@ def ccc_vendor_dashboard(
     db: Session = Depends(get_db),
     _: PortalUser = Depends(get_current_user),
 ):
+    return _build_ccc_vendor_dashboard(vendor, from_date, to_date, description, db, details_limit=100)
+
+
+def _build_ccc_vendor_dashboard(
+    vendor: str,
+    from_date: date | None,
+    to_date: date | None,
+    description: str,
+    db: Session,
+    details_limit: int | None,
+):
     rows = [
         row for row in lowest_price_rows(
             db,
@@ -526,6 +537,8 @@ def ccc_vendor_dashboard(
         and (not description.strip() or row["description"].casefold() == description.strip().casefold())
     ]
     detail_rows = sorted(rows, key=lambda item: (item["crawl_date"], item["oem"], item["vin"]), reverse=True)
+    if details_limit is not None:
+        detail_rows = detail_rows[:details_limit]
     detail_keys = {
         (row["oem"], row["vin"], row["description"].casefold(), row["crawl_date"])
         for row in detail_rows
@@ -671,6 +684,12 @@ def ccc_vendor_dashboard(
         "losses": losses,
         "win_rate": round(wins / len(rows) * 100, 1) if rows else 0,
         "average_gap": str((total_gap / Decimal(len(rows))).quantize(Decimal("0.01"))) if rows else "0.00",
+        "average_vendor_price": str((sum((row["price"] for row in rows), Decimal("0")) / Decimal(len(rows))).quantize(Decimal("0.01"))) if rows else "0.00",
+        "average_market_low": str((sum((row["lowest_price"] for row in rows), Decimal("0")) / Decimal(len(rows))).quantize(Decimal("0.01"))) if rows else "0.00",
+        "oem_count": len({row["oem"] for row in rows}),
+        "vin_count": len({row["vin"] for row in rows}),
+        "crawl_count": len({row["crawl_date"] for row in rows}),
+        "opportunity_count": wins + losses,
         "trend": trend[-90:],
         "descriptions": descriptions,
         "details": details,
@@ -680,11 +699,11 @@ def ccc_vendor_dashboard(
 
 @router.get("/vendor-dashboard/export")
 def export_ccc_vendor_dashboard(vendor: str = Query(..., min_length=1), from_date: date | None = None, to_date: date | None = None, description: str = "", db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    dashboard = ccc_vendor_dashboard(vendor, from_date, to_date, description, db, _=user)
+    dashboard = _build_ccc_vendor_dashboard(vendor, from_date, to_date, description, db, details_limit=None)
     workbook = Workbook(write_only=True)
     summary = workbook.create_sheet("Summary")
-    summary.append(["Vendor", "From Date", "To Date", "Description", "Priced Offers", "Lowest-Price Wins", "Losses", "Win Rate", "Average Gap From Lowest"])
-    summary.append([dashboard["vendor"], dashboard["from_date"], dashboard["to_date"], description or "All descriptions", dashboard["priced_offers"], dashboard["wins"], dashboard["losses"], dashboard["win_rate"], dashboard["average_gap"]])
+    summary.append(["Vendor", "From Date", "To Date", "Description", "Priced Offers", "Lowest-Price Wins", "Losses", "Win Rate", "Average Gap From Lowest", "Average Vendor Price", "Average Market Lowest"])
+    summary.append([dashboard["vendor"], dashboard["from_date"], dashboard["to_date"], description or "All descriptions", dashboard["priced_offers"], dashboard["wins"], dashboard["losses"], dashboard["win_rate"], dashboard["average_gap"], dashboard["average_vendor_price"], dashboard["average_market_low"]])
     trend = workbook.create_sheet("Price Trend")
     trend.append(["Crawl Date", "Vendor Average Price", "Market Lowest Average Price", "Offers"])
     for item in dashboard["trend"]:

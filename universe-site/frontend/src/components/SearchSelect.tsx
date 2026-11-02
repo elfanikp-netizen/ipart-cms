@@ -36,7 +36,7 @@ export default function SearchSelect({
 }: SearchSelectProps) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
   const pickerId = useId();
   const selectedLabel = selectedLabelOverride ?? options.find((option) => option.value === value)?.label ?? value;
@@ -57,7 +57,7 @@ export default function SearchSelect({
   const choose = (option: SearchSelectOption) => {
     onChange(option.value);
     setQuery("");
-    setActiveIndex(0);
+    setActiveIndex(-1);
     setOpen(false);
   };
 
@@ -68,18 +68,19 @@ export default function SearchSelect({
       type="text"
       role="combobox"
       aria-autocomplete="list"
+      aria-haspopup="listbox"
       aria-expanded={open}
       aria-controls={`${pickerId}-options`}
       aria-activedescendant={open && filtered[activeIndex] ? `${pickerId}-${activeIndex}` : undefined}
       value={open ? query : selectedLabel}
       placeholder={placeholder ?? `Search ${label.toLocaleLowerCase()}`}
       autoComplete="off"
-      onFocus={() => { setQuery(""); setOpen(true); setActiveIndex(0); }}
-      onClick={() => { if (!open) { setQuery(""); setOpen(true); setActiveIndex(0); } }}
+      onFocus={() => { setQuery(""); setOpen(true); setActiveIndex(-1); }}
+      onClick={() => { if (!open) { setQuery(""); setOpen(true); setActiveIndex(-1); } }}
       onChange={(event) => {
         const nextQuery = event.target.value;
         setQuery(nextQuery);
-        setActiveIndex(0);
+        setActiveIndex(-1);
         setOpen(true);
         onSearch?.(nextQuery);
         if (allowCustom) onChange(nextQuery);
@@ -88,14 +89,14 @@ export default function SearchSelect({
         if (event.key === "ArrowDown") {
           event.preventDefault();
           setOpen(true);
-          setActiveIndex((index) => Math.min(index + 1, Math.max(filtered.length - 1, 0)));
+          setActiveIndex((index) => index < 0 ? 0 : Math.min(index + 1, filtered.length - 1));
         } else if (event.key === "ArrowUp") {
           event.preventDefault();
           setOpen(true);
-          setActiveIndex((index) => Math.max(index - 1, 0));
+          setActiveIndex((index) => index < 0 ? Math.max(filtered.length - 1, 0) : Math.max(index - 1, 0));
         } else if (event.key === "Enter" && open) {
           event.preventDefault();
-          if (filtered[activeIndex]) choose(filtered[activeIndex]);
+          if (filtered[activeIndex] || filtered[0]) choose(filtered[activeIndex] ?? filtered[0]);
           else if (allowCustom) setOpen(false);
         } else if (event.key === "Escape") {
           setOpen(false);
@@ -113,7 +114,7 @@ export default function SearchSelect({
         onSearch?.("");
         onChange("");
         setQuery("");
-        setActiveIndex(0);
+        setActiveIndex(-1);
         setOpen(true);
       }}
     >×</button>}
