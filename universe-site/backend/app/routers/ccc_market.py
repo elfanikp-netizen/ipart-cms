@@ -825,6 +825,17 @@ def ccc_lowest_price_details(
         row["previous_crawl_date"] = previous_row["crawl_date"] if previous_row else None
         row["previous_lowest_vendors"] = previous_row["lowest_vendors"] if previous_row else ""
         row["previous_lowest_price"] = previous_row["lowest_price"] if previous_row else None
+        comparison_price = (
+            row["second_lowest_price"]
+            if outcome == "won" and row["second_lowest_price"] is not None
+            else row["lowest_price"]
+        )
+        row["gap_price"] = abs(row["price"] - comparison_price)
+        row["gap_previous_price"] = (
+            abs(row["price"] - row["previous_lowest_price"])
+            if row["previous_lowest_price"] is not None
+            else None
+        )
     rows.sort(key=lambda row: (row["crawl_date"], row["oem"], row["vin"]), reverse=True)
     if metric == "oem":
         by_oem: dict[str, dict[str, Any]] = {}
@@ -838,9 +849,9 @@ def ccc_lowest_price_details(
     return [{
         **row,
         "price": str(row["price"]),
+        "gap_price": str(row["gap_price"]),
+        "gap_previous_price": str(row["gap_previous_price"]) if row["gap_previous_price"] is not None else None,
         "lowest_price": str(row["lowest_price"]),
-        "second_lowest_price": str(row["second_lowest_price"]) if row["second_lowest_price"] is not None else None,
-        "previous_lowest_price": str(row["previous_lowest_price"]) if row["previous_lowest_price"] is not None else None,
     } for row in rows]
 
 
@@ -858,13 +869,19 @@ def export_ccc_lowest_price_details(
     rows = ccc_lowest_price_details(vendor, description, outcome, metric, from_date, to_date, db)
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Lowest Price")
-    sheet.append(["OEM", "VIN", "Crawl Date", "Vendor", "Description", "Outcome", "Price", "Lowest Vendor(s)", "Lowest Price", "Second Lowest Vendor(s)", "Second Lowest Price", "Previous Crawl Date", "Previous Lowest Vendor(s)", "Previous Lowest Price", "Crawls per OEM"])
+    sheet.append(["OEM", "VIN", "Crawl Date", "Vendor", "Description", "Outcome", "Price", "Gap Price", "Lowest Vendor(s)", "Lowest Price", "Second Lowest Vendor(s)", "Second Lowest Price", "Previous Crawl Date", "Gap Previous Price", "Previous Lowest Vendor(s)", "Previous Lowest Price", "Crawls per OEM"])
     for row in rows:
-        crawl_date = row["crawl_date"].replace(tzinfo=None) if row["crawl_date"].tzinfo else row["crawl_date"]
+        crawl_date = row["crawl_date"]
+        if isinstance(crawl_date, str):
+            crawl_date = datetime.fromisoformat(crawl_date.replace("Z", "+00:00"))
+        if getattr(crawl_date, "tzinfo", None):
+            crawl_date = crawl_date.replace(tzinfo=None)
         previous_crawl_date = row["previous_crawl_date"]
-        if previous_crawl_date is not None and previous_crawl_date.tzinfo:
+        if isinstance(previous_crawl_date, str):
+            previous_crawl_date = datetime.fromisoformat(previous_crawl_date.replace("Z", "+00:00"))
+        if previous_crawl_date is not None and getattr(previous_crawl_date, "tzinfo", None):
             previous_crawl_date = previous_crawl_date.replace(tzinfo=None)
-        sheet.append([row["oem"], row["vin"], crawl_date, row["vendor"], row["description"], row["outcome"], row["price"], row["lowest_vendors"], row["lowest_price"], row["second_lowest_vendors"], row["second_lowest_price"], previous_crawl_date, row["previous_lowest_vendors"], row["previous_lowest_price"], row.get("crawl_count", 1)])
+        sheet.append([row["oem"], row["vin"], crawl_date, row["vendor"], row["description"], row["outcome"], row["price"], row["gap_price"], row["lowest_vendors"], row["lowest_price"], row["second_lowest_vendors"], row["second_lowest_price"], previous_crawl_date, row["gap_previous_price"], row["previous_lowest_vendors"], row["previous_lowest_price"], row.get("crawl_count", 1)])
     log_activity(db, user, "export_ccc_lowest_price_details", f"exported {len(rows)} CCC market detail rows")
     stream = BytesIO()
     workbook.save(stream)

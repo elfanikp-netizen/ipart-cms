@@ -113,8 +113,10 @@ export interface CccVendorDashboard {
     description: string;
     crawl_date: string;
     price: string;
-    lowest_vendors: string;
+    gap_price: string;
+    previous_price: string | null;
     lowest_price: string;
+    lowest_vendors: string;
     gap: string;
     outcome: "won" | "lost";
     previous_crawl_date: string | null;
@@ -171,6 +173,9 @@ export interface CccLowestPriceDetail {
   vendor: string;
   description: string;
   price: string;
+  gap_price: string;
+  previous_price: string | null;
+  gap_previous_price: string | null;
   lowest_price: string;
   lowest_vendors: string;
   second_lowest_price: string | null;
