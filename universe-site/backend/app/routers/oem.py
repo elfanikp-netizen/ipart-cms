@@ -239,15 +239,18 @@ def export_oems_by_list(
     user: PortalUser = Depends(get_current_user),
 ):
     workbook, rows, indexes = workbook_rows(file)
+    requested_rows: list[tuple[str, str, str | None]] = []
     try:
         if "oem" not in indexes:
             raise HTTPException(400, "Missing required Excel column: OEM")
         keys: set[tuple[str, str] | tuple[str, None]] = set()
         for row_number, row in enumerate(rows, start=2):
             try:
-                oem_key = normalized_key(normalize_text(get_cell(row, indexes["oem"]), "OEM"))
+                uploaded_oem = normalize_text(get_cell(row, indexes["oem"]), "OEM")
+                oem_key = normalized_key(uploaded_oem)
                 vin_key = normalize_vin(get_cell(row, indexes["vin"])) if "vin" in indexes and get_cell(row, indexes["vin"]) else None
                 keys.add((oem_key, vin_key))
+                requested_rows.append((uploaded_oem, oem_key, vin_key))
             except ValueError as error:
                 raise HTTPException(400, f"Row {row_number}: {error}") from error
     finally:
@@ -264,14 +267,38 @@ def export_oems_by_list(
     stmt = stmt.where(or_(*conditions)) if conditions else stmt.where(False)
     items = db.scalars(stmt.order_by(Oem.oem_key, Vin.vin_key)).all()
 
+    items_by_oem: dict[str, list[Oem]] = {}
+    items_by_oem_vin: dict[tuple[str, str], Oem] = {}
+    for item in items:
+        items_by_oem.setdefault(item.oem_key, []).append(item)
+        items_by_oem_vin[(item.oem_key, item.vin.vin_key)] = item
+
     output = Workbook(write_only=True)
     sheet = output.create_sheet("OEM")
     sheet.append(["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"])
-    for item in items:
-        vehicle = item.vin.vehicle
-        sheet.append([item.oem, item.vin.vin, vehicle.year, vehicle.make, vehicle.model,
-                      item.description, item.notes])
-    log_activity(db, user, "export_oems_by_list", f"exported {len(items)} OEM records from supplied list")
+    exported_count = 0
+    for uploaded_oem, oem_key, vin_key in requested_rows:
+        if vin_key is None:
+            matched_items = items_by_oem.get(oem_key, [])
+            if matched_items:
+                for item in matched_items:
+                    vehicle = item.vin.vehicle
+                    sheet.append([item.oem, item.vin.vin, vehicle.year, vehicle.make, vehicle.model,
+                                  item.description, item.notes])
+                    exported_count += 1
+            else:
+                sheet.append([uploaded_oem, None, None, None, None, None, None])
+                exported_count += 1
+        else:
+            item = items_by_oem_vin.get((oem_key, vin_key))
+            if item is not None:
+                vehicle = item.vin.vehicle
+                sheet.append([item.oem, item.vin.vin, vehicle.year, vehicle.make, vehicle.model,
+                              item.description, item.notes])
+            else:
+                sheet.append([uploaded_oem, vin_key, None, None, None, None, None])
+            exported_count += 1
+    log_activity(db, user, "export_oems_by_list", f"exported {exported_count} OEM records from supplied list")
     return excel_response(output, "oems-by-list.xlsx")
 
 

@@ -400,17 +400,18 @@ def export_vins_by_vehicle_list(
     user: PortalUser = Depends(get_current_user),
 ):
     workbook, rows, headers = open_excel(file)
+    requested_rows: list[tuple[int, str, str]] = []
     try:
         indexes = excel_indexes(headers, ("Year", "Make", "Model"))
         keys: set[tuple[int, str, str]] = set()
         errors: list[str] = []
         for row_number, row in enumerate(rows, start=2):
             try:
-                keys.add((
-                    validate_year(get_cell(row, indexes["Year"])),
-                    normalized_key(normalize_text(get_cell(row, indexes["Make"]), "Make")),
-                    normalized_key(normalize_text(get_cell(row, indexes["Model"]), "Model")),
-                ))
+                year = validate_year(get_cell(row, indexes["Year"]))
+                make = normalize_text(get_cell(row, indexes["Make"]), "Make")
+                model = normalize_text(get_cell(row, indexes["Model"]), "Model")
+                keys.add((year, normalized_key(make), normalized_key(model)))
+                requested_rows.append((year, make, model))
             except ValueError as error:
                 if len(errors) < 20:
                     errors.append(f"Row {row_number}: {error}")
@@ -422,17 +423,35 @@ def export_vins_by_vehicle_list(
     matched_vehicles = db.scalars(select(Vehicle).where(
         tuple_(Vehicle.year, Vehicle.make_key, Vehicle.model_key).in_(keys)
     )).all() if keys else []
+    vehicle_by_key = {(item.year, item.make_key, item.model_key): item for item in matched_vehicles}
     vehicle_ids = [vehicle.id for vehicle in matched_vehicles]
     matched_vins = db.scalars(
         select(Vin).join(Vehicle).where(Vin.id_vehicle.in_(vehicle_ids))
         .order_by(Vehicle.year, Vehicle.make_key, Vehicle.model_key, Vin.vin_key)
     ).all() if vehicle_ids else []
+    vins_by_vehicle: dict[int, list[Vin]] = {}
+    for item in matched_vins:
+        vins_by_vehicle.setdefault(item.id_vehicle, []).append(item)
+
     workbook_out = Workbook(write_only=True)
     sheet = workbook_out.create_sheet("VIN")
     sheet.append(["Year", "Make", "Model", "VIN"])
-    for item in matched_vins:
-        sheet.append([item.vehicle.year, item.vehicle.make, item.vehicle.model, item.vin])
-    log_activity(db, user, "export_vins_by_vehicle_list", f"exported {len(matched_vins)} VIN records")
+    exported_count = 0
+    for year, uploaded_make, uploaded_model in requested_rows:
+        vehicle = vehicle_by_key.get((year, normalized_key(uploaded_make), normalized_key(uploaded_model)))
+        if vehicle is None:
+            sheet.append([year, uploaded_make, uploaded_model, None])
+            exported_count += 1
+            continue
+        vehicle_vins = vins_by_vehicle.get(vehicle.id, [])
+        if vehicle_vins:
+            for item in vehicle_vins:
+                sheet.append([vehicle.year, vehicle.make, vehicle.model, item.vin])
+                exported_count += 1
+        else:
+            sheet.append([vehicle.year, vehicle.make, vehicle.model, None])
+            exported_count += 1
+    log_activity(db, user, "export_vins_by_vehicle_list", f"exported {exported_count} VIN records")
     return excel_response(workbook_out, "vins-by-vehicle-list.xlsx")
 
 
