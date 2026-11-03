@@ -145,7 +145,7 @@ export default function RunDetailPage() {
           <button
             onClick={() => void resumeRun()}
             disabled={!run.can_continue || continuing}
-            title={!run.can_continue ? "Input workbook or crawler environment is unavailable" : run.supports_resume ? "Continue this run from saved output" : "Continue this run from the next unfinished input row"}
+            title={!run.can_continue ? "Input workbook or crawler environment is unavailable" : "Continue from saved progress when available; otherwise restart from input"}
           >
             {continuing ? "Continuing…" : "↻ Continue run"}
           </button>

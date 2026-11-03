@@ -65,8 +65,8 @@ class CrawlerSpec:
     supports_debug: bool = False
     supports_manual_login: bool = False
     supports_description: bool = False
-    supports_resume: bool = True
-    resume_requires_output: bool = True
+    supports_resume: bool = False
+    resume_requires_output: bool = False
     description_default: str = ""
     fresh_flag: str = "--fresh"
     headed_flag: str | None = None     # generic "show browser" flag name, e.g. --headed
@@ -170,6 +170,7 @@ def _brand_crawlers() -> list[CrawlerSpec]:
                 column_required=True,
                 supports_limit=False,
                 supports_show=False,   # always opens a visible Chrome via CDP
+                supports_resume=True,
                 supports_live_visibility=True,
                 fresh_flag="--start-over",
                 sites=sites,
@@ -197,7 +198,6 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_limit=False,
             supports_fresh=False,
             supports_resume=True,
-            resume_requires_output=True,
             headed_flag="--headed",
             supports_description=True,
             description_default="A/M: CAPA",
@@ -214,6 +214,8 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_show=True,
             supports_live_visibility=True,
             supports_manual_login=True,
+            supports_resume=True,
+            resume_requires_output=False,
             sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_crawler.py"),),
             notes="Headless by default; login via .env. Use --show / manual login if blocked.",
         ),
@@ -227,12 +229,11 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_limit=True,
             supports_delay=True,
             supports_fresh=False,
+            supports_resume=True,
             supports_show=True,
             supports_live_visibility=True,
             live_visibility_flag="--live-visibility",
             supports_manual_login=True,
-            supports_resume=True,
-            resume_requires_output=True,
             sites=(SiteVariant(key="pacificbest", label="Pacific Best", script="pacificbest_crawler.py"),),
             notes="Pacific Best Parts catalog. Manual login requires a visible browser; credentials are read from the project .env.",
         ),
@@ -244,6 +245,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             cwd=settings.keystone_dir,
             python=keystone_py,
             column_allowed=False,
+            supports_resume=True,
             supports_show=True,
             supports_live_visibility=True,
             supports_manual_login=True,
@@ -258,6 +260,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             python=carid_py,
             supports_debug=True,
             supports_show=False,       # always visible Chrome via CDP
+            supports_resume=True,
             supports_live_visibility=True,
             fresh_flag="--no-resume",
             sites=(SiteVariant(key="carid", label="carid.com", script="carid_scraper.py"),),
@@ -271,6 +274,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             cwd=settings.carid_dir,
             python=carid_py,
             supports_debug=True,
+            supports_resume=True,
             supports_live_visibility=True,
             fresh_flag="--no-resume",
             sites=(SiteVariant(key="carid", label="carid.com", script="carid_interchange_scraper.py"),),
@@ -286,6 +290,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_limit=True,
             supports_fresh=True,
             fresh_flag="--start-over",
+            supports_resume=True,
             supports_show=False,
             supports_live_visibility=True,
             resume_requires_output=False,

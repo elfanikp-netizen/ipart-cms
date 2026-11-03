@@ -13,6 +13,28 @@ from app.runner import Runner
 
 
 class RunnerCompletionTests(unittest.TestCase):
+    def test_carid_run_workspace_receives_reserved_cdp_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "carid"
+            project.mkdir()
+            script = project / "carid_scraper.py"
+            script.write_text("CDP_PORT = 9222\n", encoding="utf-8")
+            interchange = project / "carid_interchange_scraper.py"
+            interchange.write_text("from carid_scraper import get_cdp_port\n", encoding="utf-8")
+            spec = SimpleNamespace(
+                id="carid",
+                cwd=project,
+                resolve_script=lambda _site: script,
+            )
+            runner = Runner()
+
+            with patch("app.runner.settings.data_dir", root / "data"):
+                _, workspace, env = runner._prepare_run_workspace(spec, 123, 35671, {})
+
+            self.assertEqual(env["CARID_CDP_PORT"], "35671")
+            self.assertIn("CDP_PORT = 35671", (workspace / script.name).read_text(encoding="utf-8"))
+
     def test_successful_exit_persists_success_status_and_activity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir)

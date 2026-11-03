@@ -57,7 +57,8 @@ def to_out(run: Run, user: User | None = None) -> RunOut:
     resumable_status = run.status in {"stopped", "failed"}
     out = RunOut.model_validate(run)
     out.crawler_name = spec.name if spec else run.crawler_id
-    out.has_output = run_artifact_path(run, "output") is not None
+    output_path = run_artifact_path(run, "output")
+    out.has_output = output_path is not None
     out.can_continue = (
         resumable_status
         and bool(spec and spec.supports_resume)
@@ -65,6 +66,8 @@ def to_out(run: Run, user: User | None = None) -> RunOut:
         and spec is not None
         and spec.resolve_script(params.get("site")).is_file()
         and spec.python.is_file()
+        and (not spec.resume_requires_output or output_path is not None)
+        and (output_path is None or is_zipfile(output_path))
     )
     out.supports_resume = bool(spec and spec.supports_resume)
     out.can_manage = bool(user and (user.role == "superadmin" or run.user_id == user.id))
@@ -386,11 +389,11 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     input_path = run_artifact_path(run, "input")
     if input_path is None:
         raise HTTPException(409, "The original input workbook is unavailable; this run cannot be continued")
-    if spec.supports_resume and spec.resume_requires_output:
-        output_path = run_artifact_path(run, "output")
-        if output_path is None:
+    output_path = run_artifact_path(run, "output")
+    if spec.supports_resume:
+        if spec.resume_requires_output and output_path is None:
             raise HTTPException(409, "No partial output exists to resume; start a new run instead")
-        if not is_zipfile(output_path):
+        if output_path is not None and not is_zipfile(output_path):
             raise HTTPException(409, "The saved partial output is not a valid Excel workbook and cannot be resumed safely; restore a valid output or start a new run")
 
     params["fresh"] = False
@@ -406,7 +409,7 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     db.refresh(run)
 
     runner.enqueue(run.id)
-    resume_detail = "from its saved output" if spec.supports_resume else "from the next unfinished input row"
+    resume_detail = "from saved progress" if output_path else "from the original input"
     log_activity(db, user, "continue_run", f"continued run #{run.id} {resume_detail}")
     return to_out(run, user)
 

@@ -313,6 +313,8 @@ if ($windowCount -eq 0) {{ exit 3 }}
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(import_paths)
         env["PYTHONUNBUFFERED"] = "1"
+        if spec.id in {"carid", "carid-interchange"}:
+            env["CARID_CDP_PORT"] = str(cdp_port)
         return script_path, workspace, env
 
     def _set_waiting(self, run_id: int, waiting: bool) -> None:
