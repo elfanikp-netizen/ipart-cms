@@ -3,11 +3,12 @@ import os
 import shutil
 import subprocess
 import urllib.request
+from io import BytesIO
 from pathlib import Path
 from zipfile import is_zipfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from ..config import settings
 from ..crawlers import CRAWLERS, get_crawler
 from ..db import SessionLocal
 from ..deps import get_current_user, log_activity
+from ..input_files import create_template, inspect_workbook, validate_input
 from ..models import Activity, Run, User, utcnow
 from ..runner import runner
 from ..schemas import ActivityPageOut, QueueOut, RunOut
@@ -89,6 +91,47 @@ def require_run_owner_or_admin(run: Run, user: User) -> None:
 @router.get("/crawlers")
 def list_crawlers(_: User = Depends(get_current_user)):
     return [spec.to_dict() for spec in CRAWLERS.values()]
+
+
+@router.get("/crawlers/{crawler_id}/template")
+def download_input_template(
+    crawler_id: str,
+    site: str = "",
+    _: User = Depends(get_current_user),
+):
+    spec = get_crawler(crawler_id)
+    if spec is None:
+        raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
+    variant = spec.resolve_site(site)
+    site_name = f"-{variant.key}" if variant else ""
+    return StreamingResponse(
+        BytesIO(create_template(spec, site)),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{crawler_id}{site_name}-template.xlsx"'},
+    )
+
+
+@router.post("/input-preview")
+async def preview_input(
+    crawler_id: str = Form(...),
+    file: UploadFile = File(...),
+    column: str = Form(""),
+    site: str = Form(""),
+    _: User = Depends(get_current_user),
+):
+    spec = get_crawler(crawler_id)
+    if spec is None:
+        raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
+    suffix = Path(file.filename or "input.xlsx").suffix.lower()
+    if suffix not in ALLOWED_INPUT_SUFFIXES:
+        raise HTTPException(400, "Input must be an Excel file (.xlsx / .xlsm / .xls)")
+    content = await file.read()
+    try:
+        headers, has_data = inspect_workbook(content, suffix)
+    except Exception as error:
+        return {"headers": [], "valid": False, "errors": [f"Could not read workbook: {error}"]}
+    errors = validate_input(spec, site, column, headers, has_data)
+    return {"headers": headers, "valid": not errors, "errors": errors}
 
 
 @router.get("/queue", response_model=QueueOut)
@@ -253,6 +296,14 @@ async def create_run(
     suffix = Path(file.filename or "input.xlsx").suffix.lower()
     if suffix not in ALLOWED_INPUT_SUFFIXES:
         raise HTTPException(400, "Input must be an Excel file (.xlsx / .xlsm / .xls)")
+    file_content = await file.read()
+    try:
+        headers, has_data = inspect_workbook(file_content, suffix)
+    except Exception as error:
+        raise HTTPException(400, f"Could not read input workbook: {error}") from error
+    input_errors = validate_input(spec, site, column, headers, has_data)
+    if input_errors:
+        raise HTTPException(400, " ".join(input_errors))
 
     params = {
         "column": column.strip(),
@@ -275,7 +326,7 @@ async def create_run(
     run_dir = settings.data_dir / "runs" / str(run.id)
     run_dir.mkdir(parents=True, exist_ok=True)
     input_path = run_dir / f"input{suffix}"
-    input_path.write_bytes(await file.read())
+    input_path.write_bytes(file_content)
 
     run.input_path = str(input_path)
     run.output_path = str(run_dir / "output.xlsx")

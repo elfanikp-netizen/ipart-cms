@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Activity, ActivityPage, Crawler, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
+import type { Activity, ActivityPage, Crawler, InputPreview, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
 
 // Same-origin by default: the Vite dev proxy (and any reverse proxy like ngrok)
 // forwards /api to the backend, so the UI works over the tunnel URL too.
@@ -70,6 +70,20 @@ export const listUserActivity = (userId: number, limit = 100) =>
 
 // ---------------------------------------------------------------- crawlers & runs
 export const listCrawlers = () => client.get<Crawler[]>("/api/crawlers").then((r) => r.data);
+export function previewInput(crawlerId: string, file: File, site: string, column: string) {
+  const form = new FormData();
+  form.append("crawler_id", crawlerId);
+  form.append("file", file);
+  form.append("site", site);
+  form.append("column", column);
+  return client.post<InputPreview>("/api/input-preview", form).then((r) => r.data);
+}
+export function downloadCrawlerTemplate(crawlerId: string, site: string) {
+  return client.get<Blob>(`/api/crawlers/${crawlerId}/template`, {
+    params: site ? { site } : undefined,
+    responseType: "blob",
+  }).then((r) => r.data);
+}
 export const listRuns = () => client.get<Run[]>("/api/runs").then((r) => r.data);
 export const getRun = (id: number) => client.get<Run>(`/api/runs/${id}`).then((r) => r.data);
 export const getRunLog = (id: number) => client.get<RunLog>(`/api/runs/${id}/log?tail=400`).then((r) => r.data);

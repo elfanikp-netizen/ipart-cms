@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { Crawler, QueueStatus, Run } from "../types";
-import { continueRun, createRun, errorText, listCrawlers, listRuns, queueStatus, stopRun } from "../api";
+import { continueRun, createRun, downloadCrawlerTemplate, errorText, listCrawlers, listRuns, previewInput, queueStatus, stopRun } from "../api";
 import ProgressBar from "../components/ProgressBar";
 import CrawlerSelect from "../components/CrawlerSelect";
 import TableSearchPagination, { useTableSearch } from "../components/TableSearchPagination";
@@ -16,6 +16,9 @@ export default function DashboardPage() {
   // form state
   const [crawlerId, setCrawlerId] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [inputPreview, setInputPreview] = useState<{ headers: string[]; valid: boolean; errors: string[] } | null>(null);
+  const [inputPreviewLoading, setInputPreviewLoading] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [column, setColumn] = useState("");
   const [site, setSite] = useState("");
   const [description, setDescription] = useState("");
@@ -37,6 +40,7 @@ export default function DashboardPage() {
     [crawlers, crawlerId]
   );
   const selectedSite = selected?.sites.find((s) => s.key === site);
+  const inputRequirements = selectedSite?.input ?? selected?.input;
   const supportsFresh = selectedSite?.supports_fresh ?? selected?.supports_fresh ?? false;
   const runsTable = useTableSearch(runs, (run) => [
     run.id,
@@ -66,6 +70,28 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!file || !crawlerId) {
+      setInputPreview(null);
+      setInputPreviewLoading(false);
+      return;
+    }
+    let active = true;
+    setInputPreview(null);
+    setInputPreviewLoading(true);
+    previewInput(crawlerId, file, site, column)
+      .then((preview) => {
+        if (active) setInputPreview(preview);
+      })
+      .catch((reason) => {
+        if (active) setInputPreview({ headers: [], valid: false, errors: [errorText(reason)] });
+      })
+      .finally(() => {
+        if (active) setInputPreviewLoading(false);
+      });
+    return () => { active = false; };
+  }, [file, crawlerId, site, column]);
+
+  useEffect(() => {
     const load = () => {
       listRuns().then(setRuns).catch(() => {});
       queueStatus().then(setQueue).catch(() => {});
@@ -76,7 +102,7 @@ export default function DashboardPage() {
   }, []);
 
   const queueRun = async () => {
-    if (!file || !crawlerId) return;
+    if (!file || !crawlerId || inputPreview?.valid !== true) return;
     setSubmitting(true);
     setError(null);
     setShowVpnWarning(false);
@@ -93,7 +119,7 @@ export default function DashboardPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !crawlerId) return;
+    if (!file || !crawlerId || inputPreview?.valid !== true) return;
     setError(null);
     const latestStatus = await refreshNetworkStatus();
     if (latestStatus?.vpn_likely !== true) {
@@ -101,6 +127,27 @@ export default function DashboardPage() {
       return;
     }
     await queueRun();
+  };
+
+  const getInputTemplate = async () => {
+    if (!selected) return;
+    setTemplateLoading(true);
+    setError(null);
+    try {
+      const template = await downloadCrawlerTemplate(selected.id, site);
+      const url = URL.createObjectURL(template);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${selected.id}${site ? `-${site}` : ""}-template.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setTemplateLoading(false);
+    }
   };
 
   const onStop = async (id: number) => {
@@ -139,7 +186,7 @@ export default function DashboardPage() {
         <form onSubmit={submit} className="form">
           <div className="form-row">
             <CrawlerSelect crawlers={crawlers} value={crawlerId} onChange={setCrawlerId} />
-            <label>
+            <label className="input-file-label">
               Input Excel file
               <input
                 ref={fileRef}
@@ -150,6 +197,37 @@ export default function DashboardPage() {
               />
             </label>
           </div>
+          {selected && inputRequirements && (
+            <section className="input-guide" aria-labelledby="input-guide-title" aria-live="polite">
+              <div className="input-guide-heading">
+                <h2 id="input-guide-title">Input workbook</h2>
+                <button type="button" className="secondary" onClick={() => void getInputTemplate()} disabled={templateLoading}>
+                  {templateLoading ? "Preparing template…" : "Download .xlsx template"}
+                </button>
+              </div>
+              {inputRequirements.hint && <p>{inputRequirements.hint}</p>}
+              {inputRequirements.required_headers.length > 0 && (
+                <p>Required headers: {inputRequirements.required_headers.map((header) => <code key={header}>{header}</code>)}</p>
+              )}
+              {inputRequirements.header_alternatives.map((group, index) => (
+                <p key={index}>Include one of: {group.map((header) => <code key={header}>{header}</code>)}</p>
+              ))}
+              {selected.column_required && <p>Select the search column below.</p>}
+              {inputPreviewLoading ? (
+                <p className="input-preview-status">Checking workbook headers…</p>
+              ) : inputPreview ? (
+                <div className={`input-preview ${inputPreview.valid ? "valid" : "invalid"}`}>
+                  <p>{inputPreview.valid ? "Workbook is ready to run." : "Workbook needs attention."}</p>
+                  {inputPreview.headers.length > 0 && (
+                    <p className="input-header-list">Detected headers: {inputPreview.headers.map((header, index) => (
+                      <code key={`${header}-${index}`}>{header || `(column ${index + 1})`}</code>
+                    ))}</p>
+                  )}
+                  {inputPreview.errors.map((message) => <p className="input-preview-error" role="alert" key={message}>{message}</p>)}
+                </div>
+              ) : file ? null : <p className="input-preview-status">Choose a workbook to check its headers.</p>}
+            </section>
+          )}
           <div className="form-row">
             {selected?.column_allowed && (
               <label>
@@ -232,7 +310,7 @@ export default function DashboardPage() {
           </div>
           {selected?.notes && <p className="notes">ℹ️ {selected.notes}</p>}
           {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={submitting || !file || !selected}>
+          <button type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true}>
             {submitting ? "Uploading…" : "▶ Start run"}
           </button>
         </form>

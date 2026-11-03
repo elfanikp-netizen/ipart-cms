@@ -40,8 +40,23 @@ export interface Crawler {
   supports_manual_login: boolean;
   supports_description: boolean;
   description_default: string;
-  sites: { key: string; label: string; script: string; supports_fresh?: boolean | null }[];
+  input: InputRequirements;
+  sites: { key: string; label: string; script: string; supports_fresh?: boolean | null; input?: InputRequirements | null }[];
   notes: string;
+}
+
+export interface InputRequirements {
+  required_headers: string[];
+  header_alternatives: string[][];
+  template_headers: string[];
+  hint: string;
+  allow_custom_column: boolean;
+}
+
+export interface InputPreview {
+  headers: string[];
+  valid: boolean;
+  errors: string[];
 }
 
 export interface Run {
