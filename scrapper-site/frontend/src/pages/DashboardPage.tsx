@@ -7,6 +7,23 @@ import CrawlerSelect from "../components/CrawlerSelect";
 import TableSearchPagination, { useTableSearch } from "../components/TableSearchPagination";
 import { useNetworkStatus } from "../components/NetworkStatus";
 
+function resolvePreviewColumn(headers: string[], selector: string): string | null {
+  if (!selector) return null;
+  const exact = headers.find((header) => header.trim().toLocaleLowerCase() === selector.toLocaleLowerCase());
+  if (exact) return exact;
+
+  const token = selector.toLocaleUpperCase();
+  let index = -1;
+  if (/^\d+$/.test(token)) {
+    index = Number(token) - 1;
+  } else if (/^[A-Z]+$/.test(token)) {
+    index = 0;
+    for (const character of token) index = index * 26 + character.charCodeAt(0) - 64;
+    index -= 1;
+  }
+  return index >= 0 ? headers[index] || null : null;
+}
+
 export default function DashboardPage() {
   const [crawlers, setCrawlers] = useState<Crawler[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -16,6 +33,7 @@ export default function DashboardPage() {
   // form state
   const [crawlerId, setCrawlerId] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [workbookTab, setWorkbookTab] = useState<"input" | "output">("input");
   const [inputPreview, setInputPreview] = useState<{ headers: string[]; valid: boolean; errors: string[] } | null>(null);
   const [inputPreviewLoading, setInputPreviewLoading] = useState(false);
   const [templateLoading, setTemplateLoading] = useState(false);
@@ -41,6 +59,16 @@ export default function DashboardPage() {
   );
   const selectedSite = selected?.sites.find((s) => s.key === site);
   const inputRequirements = selectedSite?.input ?? selected?.input;
+  const outputColumns = selectedSite?.output_columns?.length
+    ? selectedSite.output_columns
+    : selected?.output_columns ?? [];
+  const outputNotes = selectedSite?.output_notes || selected?.output_notes || "";
+  const outputSearchColumn = resolvePreviewColumn(inputPreview?.headers ?? [], column.trim())
+    || column.trim()
+    || "selected input column";
+  const displayedOutputColumns = outputColumns.map((name) =>
+    name.replace("{search_column}", outputSearchColumn)
+  );
   const supportsFresh = selectedSite?.supports_fresh ?? selected?.supports_fresh ?? false;
   const runsTable = useTableSearch(runs, (run) => [
     run.id,
@@ -57,6 +85,7 @@ export default function DashboardPage() {
   useEffect(() => {
     setSite(selected?.sites?.[0]?.key ?? "");
     setDescription(selected?.description_default ?? "");
+    setWorkbookTab("input");
   }, [selected]);
 
   useEffect(() => {
@@ -198,35 +227,71 @@ export default function DashboardPage() {
             </label>
           </div>
           {selected && inputRequirements && (
-            <section className="input-guide" aria-labelledby="input-guide-title" aria-live="polite">
-              <div className="input-guide-heading">
-                <h2 id="input-guide-title">Input workbook</h2>
-                <button type="button" className="secondary" onClick={() => void getInputTemplate()} disabled={templateLoading}>
-                  {templateLoading ? "Preparing template…" : "Download .xlsx template"}
+            <>
+              <div className="workbook-tabs" role="group" aria-label="Workbook information">
+                <button
+                  id="input-workbook-tab"
+                  type="button"
+                  aria-pressed={workbookTab === "input"}
+                  className={`workbook-tab${workbookTab === "input" ? " active" : ""}`}
+                  onClick={() => setWorkbookTab("input")}
+                >
+                  <span className="workbook-tag input-workbook-tag">INPUT WORKBOOK</span>
+                </button>
+                <button
+                  id="output-workbook-tab"
+                  type="button"
+                  aria-pressed={workbookTab === "output"}
+                  className={`workbook-tab${workbookTab === "output" ? " active" : ""}`}
+                  onClick={() => setWorkbookTab("output")}
+                >
+                  <span className="workbook-tag output-workbook-tag">OUTPUT WORKBOOK</span>
                 </button>
               </div>
-              {inputRequirements.hint && <p>{inputRequirements.hint}</p>}
-              {inputRequirements.required_headers.length > 0 && (
-                <p>Required headers: {inputRequirements.required_headers.map((header) => <code key={header}>{header}</code>)}</p>
-              )}
-              {inputRequirements.header_alternatives.map((group, index) => (
-                <p key={index}>Include one of: {group.map((header) => <code key={header}>{header}</code>)}</p>
-              ))}
-              {selected.column_required && <p>Select the search column below.</p>}
-              {inputPreviewLoading ? (
-                <p className="input-preview-status">Checking workbook headers…</p>
-              ) : inputPreview ? (
-                <div className={`input-preview ${inputPreview.valid ? "valid" : "invalid"}`}>
-                  <p>{inputPreview.valid ? "Workbook is ready to run." : "Workbook needs attention."}</p>
-                  {inputPreview.headers.length > 0 && (
-                    <p className="input-header-list">Detected headers: {inputPreview.headers.map((header, index) => (
-                      <code key={`${header}-${index}`}>{header || `(column ${index + 1})`}</code>
-                    ))}</p>
+              {workbookTab === "input" ? (
+                <section id="input-workbook-panel" className="input-guide workbook-panel" aria-label="Input workbook information" aria-live="polite">
+                  <div className="input-guide-heading">
+                    <h2 id="input-guide-title">Input columns</h2>
+                    <button type="button" className="secondary" onClick={() => void getInputTemplate()} disabled={templateLoading}>
+                      {templateLoading ? "Preparing template…" : "Download .xlsx template"}
+                    </button>
+                  </div>
+                  {inputRequirements.hint && <p>{inputRequirements.hint}</p>}
+                  {inputRequirements.required_headers.length > 0 && (
+                    <p>Required headers: {inputRequirements.required_headers.map((header) => <code key={header}>{header}</code>)}</p>
                   )}
-                  {inputPreview.errors.map((message) => <p className="input-preview-error" role="alert" key={message}>{message}</p>)}
-                </div>
-              ) : file ? null : <p className="input-preview-status">Choose a workbook to check its headers.</p>}
-            </section>
+                  {inputRequirements.header_alternatives.map((group, index) => (
+                    <p key={index}>Include one of: {group.map((header) => <code key={header}>{header}</code>)}</p>
+                  ))}
+                  {selected.column_required && <p>Select the search column below.</p>}
+                  {inputPreviewLoading ? (
+                    <p className="input-preview-status">Checking workbook headers…</p>
+                  ) : inputPreview ? (
+                    <div className={`input-preview ${inputPreview.valid ? "valid" : "invalid"}`}>
+                      <p>{inputPreview.valid ? "Workbook is ready to run." : "Workbook needs attention."}</p>
+                      {inputPreview.headers.length > 0 && (
+                        <p className="input-header-list">Detected headers: {inputPreview.headers.map((header, index) => (
+                          <code key={`${header}-${index}`}>{header || `(column ${index + 1})`}</code>
+                        ))}</p>
+                      )}
+                      {inputPreview.errors.map((message) => <p className="input-preview-error" role="alert" key={message}>{message}</p>)}
+                    </div>
+                  ) : file ? null : <p className="input-preview-status">Choose a workbook to check its headers.</p>}
+                </section>
+              ) : (
+                <section id="output-workbook-panel" className="input-guide workbook-panel output-guide" aria-label="Output workbook information">
+                  <div className="input-guide-heading">
+                    <h2>Result columns</h2>
+                    <code>output.xlsx</code>
+                  </div>
+                  {outputNotes && <p>{outputNotes}</p>}
+                  <p className="output-column-list">{displayedOutputColumns.map((name, index) => (
+                    <code key={`${name}-${index}`}>{name}</code>
+                  ))}</p>
+                  <p>Partial results may be available while a run is in progress. Download the workbook from the run details page when it is available.</p>
+                </section>
+              )}
+            </>
           )}
           <div className="form-row">
             {selected?.column_allowed && (

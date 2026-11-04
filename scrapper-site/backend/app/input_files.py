@@ -46,10 +46,13 @@ def inspect_workbook(content: bytes, suffix: str) -> tuple[list[str], bool]:
         workbook.close()
 
 
-def _column_exists(headers: list[str], selector: str) -> bool:
+def resolve_column_header(headers: list[str], selector: str) -> str | None:
+    if not selector.strip():
+        return None
     wanted = normalize_header(selector)
-    if any(normalize_header(header) == wanted for header in headers):
-        return True
+    for header in headers:
+        if normalize_header(header) == wanted:
+            return header
     token = selector.strip().upper()
     if token.isdigit():
         index = int(token) - 1
@@ -59,8 +62,36 @@ def _column_exists(headers: list[str], selector: str) -> bool:
             index = index * 26 + ord(character) - ord("A") + 1
         index -= 1
     else:
-        return False
-    return 0 <= index < len(headers) and bool(headers[index].strip())
+        return None
+    if 0 <= index < len(headers) and headers[index].strip():
+        return headers[index]
+    return None
+
+
+def _column_exists(headers: list[str], selector: str) -> bool:
+    return resolve_column_header(headers, selector) is not None
+
+
+def carid_input_mode(headers: list[str], column: str) -> str:
+    selected_header = resolve_column_header(headers, column)
+    if selected_header is not None:
+        normalized = normalize_header(selected_header)
+        return (
+            "interchange"
+            if any(token in normalized for token in ("interchange", "crossref", "xref"))
+            else "partslink"
+        )
+
+    normalized_headers = [normalize_header(header) for header in headers]
+    has_interchange = any(
+        any(token in header for token in ("interchange", "crossref", "xref"))
+        for header in normalized_headers
+    )
+    has_partslink = any(
+        any(token in header for token in ("partslink", "partnumber"))
+        for header in normalized_headers
+    )
+    return "interchange" if has_interchange and not has_partslink else "partslink"
 
 
 def validate_input(

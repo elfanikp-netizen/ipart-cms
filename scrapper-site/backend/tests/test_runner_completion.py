@@ -25,7 +25,7 @@ class RunnerCompletionTests(unittest.TestCase):
             spec = SimpleNamespace(
                 id="carid",
                 cwd=project,
-                resolve_script=lambda _site: script,
+                resolve_script=lambda _site, _input_mode=None: script,
             )
             runner = Runner()
 

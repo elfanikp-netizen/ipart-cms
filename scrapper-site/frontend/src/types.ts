@@ -41,7 +41,17 @@ export interface Crawler {
   supports_description: boolean;
   description_default: string;
   input: InputRequirements;
-  sites: { key: string; label: string; script: string; supports_fresh?: boolean | null; input?: InputRequirements | null }[];
+  sites: {
+    key: string;
+    label: string;
+    script: string;
+    supports_fresh?: boolean | null;
+    input?: InputRequirements | null;
+    output_columns?: string[];
+    output_notes?: string;
+  }[];
+  output_columns: string[];
+  output_notes: string;
   notes: string;
 }
 

@@ -55,6 +55,8 @@ class SiteVariant:
     supports_fresh: bool | None = None
     fresh_flag: str | None = None
     input_spec: InputSpec | None = None
+    output_columns: tuple[str, ...] = ()
+    output_notes: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -63,6 +65,8 @@ class SiteVariant:
             "script": self.script,
             "supports_fresh": self.supports_fresh,
             "input": self.input_spec.to_dict() if self.input_spec else None,
+            "output_columns": list(self.output_columns),
+            "output_notes": self.output_notes,
         }
 
 
@@ -93,13 +97,18 @@ class CrawlerSpec:
     sites: tuple[SiteVariant, ...] = ()
     notes: str = ""
     input_spec: InputSpec = InputSpec()
+    input_mode_scripts: dict[str, str] = field(default_factory=dict)
+    output_columns: tuple[str, ...] = ()
+    output_notes: str = ""
 
     def input_for_site(self, site_key: str | None) -> InputSpec:
         variant = self.resolve_site(site_key)
         return variant.input_spec if variant and variant.input_spec else self.input_spec
 
-    def resolve_script(self, site_key: str | None) -> Path:
-        """Pick the script for a site variant (default: the primary script)."""
+    def resolve_script(self, site_key: str | None, input_mode: str | None = None) -> Path:
+        """Pick the input-mode script or site variant, defaulting to the primary script."""
+        if input_mode and input_mode in self.input_mode_scripts:
+            return self.cwd / self.input_mode_scripts[input_mode]
         variant = self.resolve_site(site_key)
         return self.cwd / variant.script if variant else self.script
 
@@ -113,14 +122,14 @@ class CrawlerSpec:
 
     def build_args(self, params: dict, input_path: Path, output_path: Path) -> list[str]:
         variant = self.resolve_site(params.get("site"))
-        script = self.cwd / variant.script if variant else self.script
+        script = self.resolve_script(params.get("site"), params.get("input_mode"))
         args = [str(script)]
         if variant is None or variant.input_flag is not None:
             args += [variant.input_flag if variant else "--input", str(input_path)]
         else:
             args.append(str(input_path))
         args += [variant.output_flag if variant else "--output", str(output_path)]
-        column = (params.get("column") or "").strip()
+        column = (params.get("resolved_column") or params.get("column") or "").strip()
         if column and self.column_allowed:
             args += ["--column", column]
         description = (params.get("description") or "").strip()
@@ -171,6 +180,8 @@ class CrawlerSpec:
             "sites": [s.to_dict() for s in self.sites],
             "notes": self.notes,
             "input": self.input_spec.to_dict(),
+            "output_columns": list(self.output_columns),
+            "output_notes": self.output_notes,
         }
 
 
@@ -201,6 +212,7 @@ def _brand_crawlers() -> list[CrawlerSpec]:
                 fresh_flag="--start-over",
                 sites=sites,
                 notes="Visible Chrome; solve Cloudflare manually when asked.",
+                output_columns=("OEM Number", "MSRP", "Date", "Status"),
                 input_spec=InputSpec(
                     header_alternatives=(("OEM Number", "OEM", "Part Number"),),
                     template_headers=("OEM Number",),
@@ -220,7 +232,7 @@ def _registry() -> dict[str, CrawlerSpec]:
     specs: list[CrawlerSpec] = [
         CrawlerSpec(
             id="ccc",
-            name="CCC Workfile (VIN)",
+            name="CCC Workfile",
             group="CCC",
             script=settings.ccc_dir / "crawler.py",
             cwd=settings.ccc_dir,
@@ -239,10 +251,17 @@ def _registry() -> dict[str, CrawlerSpec]:
                 template_headers=("VIN", "OEM"),
                 hint="Use one vehicle per row. Separate multiple OEM numbers in a cell with commas.",
             ),
+            output_columns=(
+                "Year", "Make", "Model", "VIN", "OEM", "Ipart listed on CCC",
+                "Ipart List Price CCC", "Lowest CCC Price", "Lowest CCC Supplier",
+                "Next Lowest CCC Price", "Next Lowest CCC Supplier",
+                "Lowest CCC Price Supplier", "Status", "date_time", "market_data",
+            ),
+            output_notes="Vehicle and OEM details, iPart price, lowest and next-lowest CCC prices and suppliers, plus status and market data.",
         ),
         CrawlerSpec(
             id="keystone",
-            name="Keystone Partslink",
+            name="Keystone",
             group="Keystone",
             script=settings.keystone_dir / "keystone_crawler.py",
             cwd=settings.keystone_dir,
@@ -259,6 +278,15 @@ def _registry() -> dict[str, CrawlerSpec]:
                 template_headers=("PARTSLINK",),
                 hint="Put one Partslink number per row. Select a different column if your header uses another name.",
             ),
+            output_columns=(
+                "Search {search_column}", "Partslink Number (when different from search column)",
+                "Oldest Year", "Newest Year", "Brand", "Model", "Type",
+                "Interchange Number", "OEM Number",
+                *(f"Interchange {number}" for number in range(1, 6)),
+                *(f"OEM {number}" for number in range(1, 6)),
+                "Number Values", "Multiple Number", "Status",
+            ),
+            output_notes="The search-result heading uses the selected input column. Interchange and OEM values are also expanded into numbered columns.",
         ),
         CrawlerSpec(
             id="pacific-best",
@@ -283,10 +311,14 @@ def _registry() -> dict[str, CrawlerSpec]:
                 hint="Include PARTSLINK and/or OEM values. Choose which column to search.",
                 allow_custom_column=False,
             ),
+            output_columns=(
+                "PARTSLINK", "OEM", "YEAR1", "YEAR2", "MAKE", "MODEL", "DEPI",
+                "CERT", "CA", "TX", "VA", "Your Price", "List Price", "Description",
+            ),
         ),
         CrawlerSpec(
             id="keystone-model",
-            name="Keystone Find-Model",
+            name="Keystone by Brand",
             group="Keystone",
             script=settings.keystone_dir / "keystone_model_crawler.py",
             cwd=settings.keystone_dir,
@@ -302,6 +334,14 @@ def _registry() -> dict[str, CrawlerSpec]:
                 template_headers=("Year", "Brand", "Model", "Parts", "Category"),
                 hint="Each row describes a vehicle and the part/category to search.",
             ),
+            output_columns=(
+                "Partslink Number", "Oldest Year", "Newest Year", "Brand", "Model",
+                "Interchange Number", "Part Type", "OEM Number",
+                *(f"Interchange Number {number}" for number in range(1, 6)),
+                *(f"OEM Number {number}" for number in range(1, 6)),
+                "Number Values", "Description", "Search Key", "Search Status",
+            ),
+            output_notes="Matched part identifiers and fitment, plus part description and search status for each requested vehicle/part/category.",
         ),
         CrawlerSpec(
             id="carid",
@@ -317,30 +357,27 @@ def _registry() -> dict[str, CrawlerSpec]:
             fresh_flag="--no-resume",
             sites=(SiteVariant(key="carid", label="carid.com", script="carid_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
+            input_mode_scripts={
+                "partslink": "carid_scraper.py",
+                "interchange": "carid_interchange_scraper.py",
+            },
             input_spec=InputSpec(
-                header_alternatives=(("PARTSLINK", "Partslink Number", "Part Number"),),
+                header_alternatives=((
+                    "PARTSLINK", "Partslink Number", "Part Number",
+                    "Interchange", "Interchange Number", "Cross Reference",
+                ),),
                 template_headers=("PARTSLINK",),
-                hint="Put one Partslink/part number per row. Select a different column for custom headers.",
+                hint="Put one Partslink or interchange number per row. Choose the column when your workbook has both; Interchange/Cross Reference headers select interchange search.",
             ),
-        ),
-        CrawlerSpec(
-            id="carid-interchange",
-            name="CARiD Interchange",
-            group="CARiD",
-            script=settings.carid_dir / "carid_interchange_scraper.py",
-            cwd=settings.carid_dir,
-            python=carid_py,
-            supports_debug=True,
-            supports_resume=True,
-            supports_live_visibility=True,
-            fresh_flag="--no-resume",
-            sites=(SiteVariant(key="carid", label="carid.com", script="carid_interchange_scraper.py"),),
-            notes="Visible Chrome; solve Cloudflare manually when asked.",
-            input_spec=InputSpec(
-                header_alternatives=(("Interchange", "Interchange Number", "Cross Reference"),),
-                template_headers=("Interchange",),
-                hint="Put one interchange number per row. Select a different column for custom headers.",
+            output_columns=(
+                "Partslink Number", "Oldest Year", "Newest Year", "Brand", "Model", "Type",
+                "Interchange Number",
+                *(f"Interchange {number}" for number in range(1, 6)),
+                "OEM Number",
+                *(f"OEM {number}" for number in range(1, 6)),
+                "Number Values", "Multiple values", "Part Brand", "Product URL", "Status",
             ),
+            output_notes="Partslink and Interchange searches use the same result layout, with fitment, related numbers, product link and status.",
         ),
         CrawlerSpec(
             id="vin-lookup",
@@ -368,6 +405,8 @@ def _registry() -> dict[str, CrawlerSpec]:
                         template_headers=("Year", "Make", "Model"),
                         hint="Each row needs a vehicle Year, Make, and Model.",
                     ),
+                    output_columns=("Year", "Make", "Model", "VIN", "Status"),
+                    output_notes="Vehicle year, make and model with the matched VIN and lookup status.",
                 ),
                 SiteVariant(
                     key="google",
@@ -381,9 +420,12 @@ def _registry() -> dict[str, CrawlerSpec]:
                         template_headers=("Year", "Make", "Model"),
                         hint="Each row needs a vehicle Year, Make, and Model.",
                     ),
+                    output_columns=("VIN", "VIN_Source", "VIN_Candidates", "VIN_Status"),
+                    output_notes="The original input columns are preserved; VIN, source, candidate matches and lookup status are added.",
                 ),
             ),
             notes="Both sites find a VIN matching Year/Make/Model, not a specific vehicle. Google Search may require solving a CAPTCHA in its browser window.",
+            output_columns=("Year", "Make", "Model", "VIN", "Status"),
         ),
         *_brand_crawlers(),
     ]

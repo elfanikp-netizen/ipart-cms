@@ -16,7 +16,7 @@ from ..config import settings
 from ..crawlers import CRAWLERS, get_crawler
 from ..db import SessionLocal
 from ..deps import get_current_user, log_activity
-from ..input_files import create_template, inspect_workbook, validate_input
+from ..input_files import carid_input_mode, create_template, inspect_workbook, resolve_column_header, validate_input
 from ..models import Activity, Run, User, utcnow
 from ..runner import runner
 from ..schemas import ActivityPageOut, QueueOut, RunOut
@@ -66,7 +66,7 @@ def to_out(run: Run, user: User | None = None) -> RunOut:
         and bool(spec and spec.supports_resume)
         and run_artifact_path(run, "input") is not None
         and spec is not None
-        and spec.resolve_script(params.get("site")).is_file()
+        and spec.resolve_script(params.get("site"), params.get("input_mode")).is_file()
         and spec.python.is_file()
         and (not spec.resume_requires_output or output_path is not None)
         and (output_path is None or is_zipfile(output_path))
@@ -285,9 +285,6 @@ async def create_run(
     spec = get_crawler(crawler_id)
     if spec is None:
         raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
-    script = spec.resolve_script(site)
-    if not script.exists():
-        raise HTTPException(400, f"Script not found: {script}")
     if not spec.python.exists():
         raise HTTPException(400, f"Python env not found: {spec.python}")
     if spec.column_required and not column.strip():
@@ -305,9 +302,16 @@ async def create_run(
     if input_errors:
         raise HTTPException(400, " ".join(input_errors))
 
+    input_mode = carid_input_mode(headers, column) if spec.id == "carid" else ""
+    script = spec.resolve_script(site, input_mode)
+    if not script.exists():
+        raise HTTPException(400, f"Script not found: {script}")
+
     params = {
         "column": column.strip(),
+        "resolved_column": resolve_column_header(headers, column) or "",
         "site": site.strip(),
+        "input_mode": input_mode,
         "description": description.strip(),
         "limit": limit,
         "delay": delay,
@@ -430,7 +434,7 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
 
     spec = get_crawler(run.crawler_id)
     params = json.loads(run.params or "{}")
-    if spec is None or not spec.resolve_script(params.get("site")).exists():
+    if spec is None or not spec.resolve_script(params.get("site"), params.get("input_mode")).exists():
         raise HTTPException(400, "Crawler script is unavailable")
     if not spec.supports_resume:
         raise HTTPException(409, "This crawler does not support continuing a previous run")

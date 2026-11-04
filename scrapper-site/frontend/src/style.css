@@ -82,6 +82,22 @@ a { color: var(--accent); }
 
 .form input[type="file"] { color: var(--muted); }
 .input-file-label { flex: 1; min-width: 240px; }
+.workbook-tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.workbook-tab {
+  padding: 0.45rem 0.15rem;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.workbook-tab:hover { background: transparent; color: var(--text); }
+.workbook-tab.active { border-bottom-color: var(--accent); color: var(--text); }
+.workbook-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .input-guide {
   padding: 0.9rem 0;
   border-top: 1px solid var(--border);
@@ -98,6 +114,25 @@ a { color: var(--accent); }
 }
 .input-guide-heading h2 { margin: 0; color: var(--text); }
 .input-guide p { margin: 0.45rem 0; line-height: 1.45; }
+.workbook-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.65rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.input-workbook-tag { color: #bae6fd; border-color: #0369a1; background: rgba(3, 105, 161, 0.2); }
+.output-workbook-tag { color: #bbf7d0; border-color: #15803d; background: rgba(21, 128, 61, 0.2); }
+.output-guide { border-top: 0; padding-top: 0.25rem; }
+.output-guide h2 { margin: 0 0 0.55rem; }
+.output-guide p { max-width: 76ch; }
+.output-guide strong { color: var(--text); }
+.output-column-list { display: flex; flex-wrap: wrap; gap: 0.2rem 0.35rem; }
+.output-column-list code { margin: 0; overflow-wrap: anywhere; }
 .input-guide code {
   display: inline-block;
   margin: 0.12rem 0.2rem;

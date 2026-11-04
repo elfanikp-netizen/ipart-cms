@@ -44,7 +44,7 @@ class ContinueRunTests(unittest.TestCase):
             spec = SimpleNamespace(
                 supports_resume=True,
                 resume_requires_output=False,
-                resolve_script=lambda _site: Path(__file__),
+                resolve_script=lambda _site, _input_mode=None: Path(__file__),
                 python=Path(sys.executable),
             )
 
@@ -83,7 +83,7 @@ class ContinueRunTests(unittest.TestCase):
             spec = SimpleNamespace(
                 supports_resume=True,
                 resume_requires_output=False,
-                resolve_script=lambda _site: Path(__file__),
+                resolve_script=lambda _site, _input_mode=None: Path(__file__),
                 python=Path(sys.executable),
             )
 

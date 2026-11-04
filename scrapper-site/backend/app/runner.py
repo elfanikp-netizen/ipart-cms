@@ -267,7 +267,7 @@ if ($windowCount -eq 0) {{ exit 3 }}
     ) -> tuple[Path, Path, dict[str, str]]:
         workspace = settings.data_dir / "runs" / str(run_id) / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
-        source_script = spec.resolve_script(params.get("site"))
+        source_script = spec.resolve_script(params.get("site"), params.get("input_mode"))
         source_files = {path.name: path for path in spec.cwd.glob("*.py") if path.is_file()}
         source_files[source_script.name] = source_script
         source_text = {name: path.read_text(encoding="utf-8") for name, path in source_files.items()}
@@ -313,7 +313,7 @@ if ($windowCount -eq 0) {{ exit 3 }}
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(import_paths)
         env["PYTHONUNBUFFERED"] = "1"
-        if spec.id in {"carid", "carid-interchange"}:
+        if spec.id == "carid":
             env["CARID_CDP_PORT"] = str(cdp_port)
         return script_path, workspace, env
 
