@@ -34,6 +34,139 @@ def ensure_database_schema() -> None:
             connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {quoted}"))
 
 
+def prepare_oem_relationship_migration() -> None:
+    schema = "universe" if engine.dialect.name == "postgresql" else None
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names(schema=schema))
+    if "oem" not in tables or "oem_legacy" in tables:
+        return
+    columns = {column["name"] for column in inspector.get_columns("oem", schema=schema)}
+    if "id_vin" not in columns:
+        return
+
+    preparer = engine.dialect.identifier_preparer
+    table = f"{preparer.quote_schema(schema)}.{preparer.quote('oem')}" if schema else preparer.quote("oem")
+    with engine.begin() as connection:
+        connection.execute(text(f"ALTER TABLE {table} RENAME TO {preparer.quote('oem_legacy')}"))
+        if engine.dialect.name == "postgresql":
+            sequence = connection.execute(text(
+                "SELECT to_regclass('universe.oem_id_seq')"
+            )).scalar_one_or_none()
+            if sequence is not None:
+                connection.execute(text(
+                    "ALTER SEQUENCE universe.oem_id_seq RENAME TO oem_legacy_id_seq"
+                ))
+
+
+def migrate_oem_relationships() -> None:
+    from . import models
+
+    schema = "universe" if engine.dialect.name == "postgresql" else None
+    inspector = inspect(engine)
+    if "oem_legacy" not in inspector.get_table_names(schema=schema):
+        return
+
+    preparer = engine.dialect.identifier_preparer
+    def qualified(name: str) -> str:
+        return f"{preparer.quote_schema(schema)}.{preparer.quote(name)}" if schema else preparer.quote(name)
+
+    legacy = qualified("oem_legacy")
+    oem_table = qualified("oem")
+    oem_vin_table = qualified("oem_vin")
+    with engine.connect() as connection:
+        rows = connection.execute(text(
+            f"SELECT id, id_vin, oem, oem_key, description, notes, created_at, updated_at, "
+            f"created_by, updated_by FROM {legacy} ORDER BY id"
+        )).mappings().all()
+
+    grouped: dict[str, list] = {}
+    for row in rows:
+        key = " ".join(str(row["oem_key"] or row["oem"] or "").split()).casefold()
+        grouped.setdefault(key, []).append(row)
+
+    with engine.begin() as connection:
+        for key, group in grouped.items():
+            descriptions = list(dict.fromkeys(str(row["description"] or "").strip() for row in group if str(row["description"] or "").strip()))
+            notes = list(dict.fromkeys(str(row["notes"] or "").strip() for row in group if str(row["notes"] or "").strip()))
+            newest = max(group, key=lambda row: str(row["updated_at"] or ""))
+            existing_id = connection.execute(
+                text(f"SELECT id FROM {oem_table} WHERE oem_key = :key"), {"key": key}
+            ).scalar_one_or_none()
+            if existing_id is None:
+                existing_id = group[0]["id"]
+                connection.execute(text(
+                    f"INSERT INTO {oem_table} "
+                    "(id, oem, oem_key, description, notes, created_at, updated_at, created_by, updated_by) "
+                    "VALUES (:id, :oem, :key, :description, :notes, :created_at, :updated_at, :created_by, :updated_by)"
+                ), {
+                    "id": existing_id,
+                    "oem": group[0]["oem"],
+                    "key": key,
+                    "description": "\n".join(descriptions),
+                    "notes": "\n".join(notes),
+                    "created_at": min((row["created_at"] for row in group if row["created_at"] is not None), default=None),
+                    "updated_at": newest["updated_at"],
+                    "created_by": next((row["created_by"] for row in group if row["created_by"] is not None), None),
+                    "updated_by": newest["updated_by"],
+                })
+            linked_vins: set[int] = set()
+            for row in group:
+                vin_id = row["id_vin"]
+                if vin_id in linked_vins:
+                    continue
+                linked_vins.add(vin_id)
+                connection.execute(text(
+                    f"INSERT INTO {oem_vin_table} (id_oem, id_vin) VALUES (:id_oem, :id_vin)"
+                ), {"id_oem": existing_id, "id_vin": vin_id})
+
+        connection.execute(text(f"DROP TABLE {legacy}"))
+        if engine.dialect.name == "postgresql":
+            connection.execute(text(
+                "SELECT setval(pg_get_serial_sequence('universe.oem', 'id'), "
+                "COALESCE((SELECT MAX(id) FROM universe.oem), 1), "
+                "EXISTS (SELECT 1 FROM universe.oem))"
+            ))
+
+
+def ensure_partslink_interchange_view() -> None:
+    if engine.dialect.name == "postgresql":
+        statement = """
+            CREATE OR REPLACE VIEW universe.v_partslink_interchange AS
+            SELECT
+                p.id AS id_partslink,
+                p.partslink,
+                i.id AS id_interchange,
+                i.interchange,
+                COUNT(DISTINCT o.id) AS distinct_oem_count
+            FROM universe.oem_partslink AS op
+            JOIN universe.oem_interchange AS oi ON oi.id_oem = op.id_oem
+            JOIN universe.oem AS o ON o.id = op.id_oem
+            JOIN universe.partslink AS p ON p.id = op.id_partslink
+            JOIN universe.interchange AS i ON i.id = oi.id_interchange
+            GROUP BY p.id, p.partslink, i.id, i.interchange
+        """
+    elif engine.dialect.name == "sqlite":
+        statement = """
+            CREATE VIEW IF NOT EXISTS v_partslink_interchange AS
+            SELECT
+                p.id AS id_partslink,
+                p.partslink,
+                i.id AS id_interchange,
+                i.interchange,
+                COUNT(DISTINCT o.id) AS distinct_oem_count
+            FROM oem_partslink AS op
+            JOIN oem_interchange AS oi ON oi.id_oem = op.id_oem
+            JOIN oem AS o ON o.id = op.id_oem
+            JOIN partslink AS p ON p.id = op.id_partslink
+            JOIN interchange AS i ON i.id = oi.id_interchange
+            GROUP BY p.id, p.partslink, i.id, i.interchange
+        """
+    else:
+        return
+    with engine.begin() as connection:
+        connection.execute(text(statement))
+
+
 def migrate_vin_uniqueness() -> None:
     inspector = inspect(engine)
     schema = "universe" if engine.dialect.name == "postgresql" else None

@@ -104,6 +104,9 @@ export interface CccVendorDashboard {
   wins: number;
   losses: number;
   win_rate: number;
+  crawl_wins: number;
+  crawl_losses: number;
+  crawl_win_rate: number;
   average_gap: string;
   average_vendor_price: string;
   average_market_low: string;
@@ -112,8 +115,24 @@ export interface CccVendorDashboard {
   crawl_count: number;
   opportunity_count: number;
   trend: { date: string; average_price: string; average_lowest_price: string; offers: number }[];
-  descriptions: { description: string; wins: number; losses: number; opportunities: number; win_rate: number }[];
+  trend_oem: { date: string; average_price: string; average_lowest_price: string; oems: number }[];
+  descriptions: {
+    description: string;
+    wins: number;
+    losses: number;
+    opportunities: number;
+    win_rate: number;
+    won_oem_count: number;
+    lost_oem_count: number;
+    crawl_wins: number;
+    crawl_losses: number;
+    oem_opportunities: number;
+    oem_win_rate: number;
+    crawl_opportunities: number;
+    crawl_win_rate: number;
+  }[];
   details: {
+      vendor: string;
     oem: string;
     vin: string;
     description: string;
@@ -390,14 +409,12 @@ export async function getUniverseActivity(params: { page: number; page_size: num
 
 export interface Oem {
   id: number;
-  id_vin: number;
   oem: string;
   description: string;
   notes: string;
-  vin: string;
-  year: number;
-  make: string;
-  model: string;
+  vins: { id: number; vin: string; year: number; make: string; model: string }[];
+  partslinks: string[];
+  interchanges: string[];
   created_at: string;
   updated_at: string;
 }
@@ -417,9 +434,9 @@ export async function importOemsExcel(file: File) {
   return (await client.post<OemImportSummary>("/api/universe/oems/import", form)).data;
 }
 
-export async function downloadOemsExcel(search = "") {
+export async function downloadOemsExcel(params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc" }) {
   const response = await client.get<Blob>("/api/universe/oems/export", {
-    params: { search: search || undefined },
+    params: { ...params, search: params.search || undefined },
     responseType: "blob",
   });
   saveBlob(response.data, "oems.xlsx");
@@ -432,7 +449,7 @@ export async function downloadOemsByList(file: File) {
   saveBlob(response.data, "oems-by-list.xlsx");
 }
 
-export type OemValues = Pick<Oem, "id_vin" | "oem" | "description" | "notes">;
+export type OemValues = { id_vin: number | null; oem: string; description: string; notes: string; source_id_vin?: number | null };
 
 export async function saveOem(id: number | null, values: OemValues) {
   const response = id === null
@@ -441,8 +458,96 @@ export async function saveOem(id: number | null, values: OemValues) {
   return response.data;
 }
 
-export async function deleteOem(id: number) {
-  await client.delete(`/api/universe/oems/${id}`);
+export async function deleteOem(id: number, vinId?: number | null) {
+  const suffix = vinId == null ? "" : `/vins/${vinId}`;
+  await client.delete(`/api/universe/oems/${id}${suffix}`);
+}
+
+export type CatalogKind = "partslinks" | "interchanges";
+
+export interface CatalogRecord {
+  id: number;
+  partslink?: string;
+  interchange?: string;
+  description: string;
+  notes: string;
+  oems: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogImportSummary {
+  catalogs_created: number;
+  oems_created: number;
+  links_created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface CatalogPair {
+  id_partslink: number;
+  partslink: string;
+  id_interchange: number;
+  interchange: string;
+  distinct_oem_count: number;
+}
+
+export async function getCatalogPage(kind: CatalogKind, params: {
+  page: number;
+  page_size: number;
+  search: string;
+  filters?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}) {
+  return (await client.get<Page<CatalogRecord>>(`/api/universe/${kind}`, { params })).data;
+}
+
+export async function getCatalogPairPage(params: {
+  page: number;
+  page_size: number;
+  search: string;
+  filters?: string;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+}) {
+  return (await client.get<Page<CatalogPair>>("/api/universe/partslink-interchange", { params })).data;
+}
+
+export async function importCatalogExcel(kind: CatalogKind, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return (await client.post<CatalogImportSummary>(`/api/universe/${kind}/import`, form)).data;
+}
+
+export async function downloadCatalogExcel(kind: CatalogKind, params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc" }) {
+  const response = await client.get<Blob>(`/api/universe/${kind}/export`, { params, responseType: "blob" });
+  saveBlob(response.data, `${kind}.xlsx`);
+}
+
+export async function downloadCatalogPairsExcel(params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc" }) {
+  const response = await client.get<Blob>("/api/universe/partslink-interchange/export", { params, responseType: "blob" });
+  saveBlob(response.data, "partslink-interchange.xlsx");
+}
+
+export async function downloadCatalogByOem(kind: CatalogKind, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await client.post<Blob>(`/api/universe/${kind}/export-by-oem`, form, { responseType: "blob" });
+  saveBlob(response.data, `${kind}-by-oem.xlsx`);
+}
+
+export async function saveCatalog(kind: CatalogKind, id: number | null, values: { partslink?: string; interchange?: string; description: string; notes: string }) {
+  const url = `/api/universe/${kind}`;
+  const response = id === null
+    ? await client.post<CatalogRecord>(url, values)
+    : await client.put<CatalogRecord>(`${url}/${id}`, values);
+  return response.data;
+}
+
+export async function deleteCatalog(kind: CatalogKind, id: number) {
+  await client.delete(`/api/universe/${kind}/${id}`);
 }
 
 export async function exportCccVendorDashboard(params: {

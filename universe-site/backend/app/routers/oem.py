@@ -4,15 +4,17 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
-from ..models import Oem, Vehicle, Vin
-from ..schemas import OemCreate, OemImportOut, OemOut, OemUpdate
+from ..models import OEM_INTERCHANGE, OEM_PARTSLINK, OEM_VIN, Interchange, Oem, Partslink, Vehicle, Vin
+from ..schemas import OemCreate, OemImportOut, OemOut, OemUpdate, OemVinOut
 from .master_data import (
+    apply_column_filters,
+    apply_column_sort,
     get_cell,
     normalize_text,
     normalize_vin,
@@ -29,48 +31,47 @@ MAX_PAGE_SIZE = 100
 def row_out(item: Oem) -> OemOut:
     return OemOut(
         id=item.id,
-        id_vin=item.id_vin,
         oem=item.oem,
         description=item.description,
         notes=item.notes,
-        vin=item.vin.vin,
-        year=item.vin.vehicle.year,
-        make=item.vin.vehicle.make,
-        model=item.vin.vehicle.model,
+        vins=[OemVinOut(id=vin.id, vin=vin.vin, year=vin.vehicle.year,
+                        make=vin.vehicle.make, model=vin.vehicle.model)
+              for vin in sorted(item.vins, key=lambda value: value.vin_key)],
+        partslinks=sorted(part.partslink for part in item.partslinks),
+        interchanges=sorted(group.interchange for group in item.interchanges),
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
 
 
 def query_oems(search: str):
-    stmt = select(Oem).join(Oem.vin).join(Vin.vehicle)
+    stmt = select(Oem)
     if search.strip():
         pattern = f"%{search.strip()}%"
         stmt = stmt.where(or_(
             Oem.oem.ilike(pattern),
             Oem.description.ilike(pattern),
-            Vin.vin.ilike(pattern),
-            Vehicle.make.ilike(pattern),
-            Vehicle.model.ilike(pattern),
-            cast(Vehicle.year, String).ilike(pattern),
+            Oem.vins.any(Vin.vin.ilike(pattern)),
+            Oem.vins.any(Vin.vehicle.has(or_(
+                Vehicle.make.ilike(pattern),
+                Vehicle.model.ilike(pattern),
+                cast(Vehicle.year, String).ilike(pattern),
+            ))),
         ))
     return stmt
 
 
 def get_oem_or_404(db: Session, oem_id: int) -> Oem:
     item = db.scalar(
-        select(Oem).options(joinedload(Oem.vin).joinedload(Vin.vehicle)).where(Oem.id == oem_id)
+        select(Oem).options(
+            selectinload(Oem.vins).joinedload(Vin.vehicle),
+            selectinload(Oem.partslinks),
+            selectinload(Oem.interchanges),
+        ).where(Oem.id == oem_id)
     )
     if item is None:
         raise HTTPException(404, "OEM record not found")
     return item
-
-
-def duplicate_oem(db: Session, id_vin: int, oem_key: str, exclude_id: int | None = None) -> bool:
-    stmt = select(Oem.id).where(Oem.id_vin == id_vin, Oem.oem_key == oem_key)
-    if exclude_id is not None:
-        stmt = stmt.where(Oem.id != exclude_id)
-    return db.scalar(stmt) is not None
 
 
 def normalize_oem(value: object) -> tuple[str, str]:
@@ -86,32 +87,38 @@ def create_oem(
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
-    vin_item = db.get(Vin, payload.id_vin)
-    if vin_item is None:
+    vin_item = db.get(Vin, payload.id_vin) if payload.id_vin is not None else None
+    if payload.id_vin is not None and vin_item is None:
         raise HTTPException(404, "VIN not found")
     try:
         oem, oem_key = normalize_oem(payload.oem)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
-    if duplicate_oem(db, vin_item.id, oem_key):
-        raise HTTPException(409, "This OEM already exists for the selected VIN")
-    item = Oem(
-        id_vin=vin_item.id,
-        oem=oem,
-        oem_key=oem_key,
-        description=payload.description.strip(),
-        notes=payload.notes.strip(),
-        created_by=user.id,
-        updated_by=user.id,
-    )
-    db.add(item)
+    item = db.scalar(select(Oem).where(Oem.oem_key == oem_key))
+    created = item is None
+    if item is None:
+        item = Oem(oem=oem, oem_key=oem_key, description=payload.description.strip(),
+                   notes=payload.notes.strip(), created_by=user.id, updated_by=user.id)
+        db.add(item)
+        db.flush()
+    else:
+        item.oem = oem
+        item.description = payload.description.strip() or item.description
+        item.notes = payload.notes.strip() or item.notes
+        item.updated_by = user.id
+    linked = vin_item is not None and vin_item not in item.vins
+    if linked:
+        item.vins.append(vin_item)
     try:
         db.commit()
     except IntegrityError as error:
         db.rollback()
-        raise HTTPException(409, "This OEM already exists for the selected VIN") from error
+        raise HTTPException(409, "This OEM number already exists") from error
     item = get_oem_or_404(db, item.id)
-    log_activity(db, user, "create_oem", f"created OEM {item.oem} for VIN {item.vin.vin}")
+    detail = f"created OEM {item.oem}" if created else f"updated OEM {item.oem}"
+    if vin_item is not None:
+        detail += f" for VIN {vin_item.vin}"
+    log_activity(db, user, "create_oem", detail)
     return row_out(item)
 
 
@@ -123,16 +130,24 @@ def update_oem(
     user: PortalUser = Depends(get_current_user),
 ):
     item = get_oem_or_404(db, oem_id)
-    vin_item = db.get(Vin, payload.id_vin)
-    if vin_item is None:
+    vin_item = db.get(Vin, payload.id_vin) if payload.id_vin is not None else None
+    if payload.id_vin is not None and vin_item is None:
         raise HTTPException(404, "VIN not found")
     try:
         oem, oem_key = normalize_oem(payload.oem)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
-    if duplicate_oem(db, vin_item.id, oem_key, exclude_id=item.id):
-        raise HTTPException(409, "This OEM already exists for the selected VIN")
-    item.id_vin = vin_item.id
+    duplicate = db.scalar(select(Oem.id).where(Oem.oem_key == oem_key, Oem.id != item.id))
+    if duplicate:
+        raise HTTPException(409, "This OEM number already exists")
+    source_vin = db.get(Vin, payload.source_id_vin) if payload.source_id_vin is not None else None
+    if payload.source_id_vin is not None and source_vin is None:
+        raise HTTPException(404, "Source VIN not found")
+    if source_vin is not None and source_vin in item.vins and source_vin != vin_item:
+        item.vins.remove(source_vin)
+    linked = vin_item is not None and vin_item not in item.vins
+    if linked:
+        item.vins.append(vin_item)
     item.oem = oem
     item.oem_key = oem_key
     item.description = payload.description.strip()
@@ -142,9 +157,9 @@ def update_oem(
         db.commit()
     except IntegrityError as error:
         db.rollback()
-        raise HTTPException(409, "This OEM already exists for the selected VIN") from error
+        raise HTTPException(409, "This OEM number already exists") from error
     item = get_oem_or_404(db, item.id)
-    log_activity(db, user, "update_oem", f"updated OEM {item.oem} for VIN {item.vin.vin}")
+    log_activity(db, user, "update_oem", f"updated OEM {item.oem}")
     return row_out(item)
 
 
@@ -155,10 +170,23 @@ def delete_oem(
     user: PortalUser = Depends(get_current_user),
 ):
     item = get_oem_or_404(db, oem_id)
-    detail = f"deleted OEM {item.oem} for VIN {item.vin.vin}"
+    detail = f"deleted OEM {item.oem} and its fitment/catalog links"
     db.delete(item)
     db.commit()
     log_activity(db, user, "delete_oem", detail)
+    return Response(status_code=204)
+
+
+@router.delete("/{oem_id}/vins/{vin_id}", status_code=204)
+def delete_oem_vin(oem_id: int, vin_id: int, db: Session = Depends(get_db),
+                   user: PortalUser = Depends(get_current_user)):
+    item = get_oem_or_404(db, oem_id)
+    vin_item = next((value for value in item.vins if value.id == vin_id), None)
+    if vin_item is None:
+        raise HTTPException(404, "OEM fitment not found")
+    item.vins.remove(vin_item)
+    db.commit()
+    log_activity(db, user, "delete_oem_fitment", f"removed OEM {item.oem} fitment for VIN {vin_item.vin}")
     return Response(status_code=204)
 
 
@@ -191,14 +219,52 @@ def list_oems(
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     search: str = "",
+    filters: str = "",
+    sort_by: str = "",
+    sort_dir: str = "asc",
     db: Session = Depends(get_db),
     _: PortalUser = Depends(get_current_user),
 ):
-    stmt = query_oems(search)
+    stmt = select(Oem)
+    if search.strip():
+        matching = query_oems(search).with_only_columns(Oem.id)
+        stmt = stmt.where(Oem.id.in_(matching))
+    columns = {
+        "oem": Oem.oem,
+        "vins": select(func.min(Vin.vin_key)).join(OEM_VIN, OEM_VIN.c.id_vin == Vin.id)
+            .where(OEM_VIN.c.id_oem == Oem.id).scalar_subquery(),
+        "partslinks": select(func.min(Partslink.partslink_key)).join(
+            OEM_PARTSLINK, OEM_PARTSLINK.c.id_partslink == Partslink.id
+        ).where(OEM_PARTSLINK.c.id_oem == Oem.id).scalar_subquery(),
+        "interchanges": select(func.min(Interchange.interchange_key)).join(
+            OEM_INTERCHANGE, OEM_INTERCHANGE.c.id_interchange == Interchange.id
+        ).where(OEM_INTERCHANGE.c.id_oem == Oem.id).scalar_subquery(),
+        "description": Oem.description,
+        "updated_at": Oem.updated_at,
+    }
+    empty_conditions = {
+        "vins": ~Oem.vins.any(),
+        "partslinks": ~Oem.partslinks.any(),
+        "interchanges": ~Oem.interchanges.any(),
+    }
+    value_conditions = {
+        "vins": lambda value: Oem.vins.any(or_(
+            Vin.vin.ilike(f"%{value}%"),
+            Vin.vehicle.has(or_(Vehicle.make.ilike(f"%{value}%"), Vehicle.model.ilike(f"%{value}%"),
+                                cast(Vehicle.year, String).ilike(f"%{value}%"))),
+        )),
+        "partslinks": lambda value: Oem.partslinks.any(Partslink.partslink.ilike(f"%{value}%")),
+        "interchanges": lambda value: Oem.interchanges.any(Interchange.interchange.ilike(f"%{value}%")),
+    }
+    stmt = apply_column_filters(stmt, filters, columns, empty_conditions, value_conditions)
+    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (Oem.updated_at.desc(), Oem.id.desc()))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = db.scalars(
-        stmt.options(joinedload(Oem.vin).joinedload(Vin.vehicle))
-        .order_by(Oem.updated_at.desc(), Oem.id.desc())
+        stmt.options(
+            selectinload(Oem.vins).joinedload(Vin.vehicle),
+            selectinload(Oem.partslinks),
+            selectinload(Oem.interchanges),
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
@@ -214,20 +280,55 @@ def list_oems(
 @router.get("/export")
 def export_oems(
     search: str = "",
+    filters: str = "",
+    sort_by: str = "",
+    sort_dir: str = "asc",
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
-    items = db.scalars(
-        query_oems(search).options(joinedload(Oem.vin).joinedload(Vin.vehicle))
-        .order_by(Oem.oem_key, Vin.vin_key)
-    ).all()
+    stmt = select(Oem)
+    if search.strip():
+        matching = query_oems(search).with_only_columns(Oem.id)
+        stmt = stmt.where(Oem.id.in_(matching))
+    columns = {
+        "oem": Oem.oem,
+        "vins": select(func.min(Vin.vin_key)).join(OEM_VIN, OEM_VIN.c.id_vin == Vin.id)
+            .where(OEM_VIN.c.id_oem == Oem.id).scalar_subquery(),
+        "partslinks": select(func.min(Partslink.partslink_key)).join(
+            OEM_PARTSLINK, OEM_PARTSLINK.c.id_partslink == Partslink.id
+        ).where(OEM_PARTSLINK.c.id_oem == Oem.id).scalar_subquery(),
+        "interchanges": select(func.min(Interchange.interchange_key)).join(
+            OEM_INTERCHANGE, OEM_INTERCHANGE.c.id_interchange == Interchange.id
+        ).where(OEM_INTERCHANGE.c.id_oem == Oem.id).scalar_subquery(),
+        "description": Oem.description,
+        "updated_at": Oem.updated_at,
+    }
+    empty_conditions = {
+        "vins": ~Oem.vins.any(),
+        "partslinks": ~Oem.partslinks.any(),
+        "interchanges": ~Oem.interchanges.any(),
+    }
+    value_conditions = {
+        "vins": lambda value: Oem.vins.any(or_(
+            Vin.vin.ilike(f"%{value}%"),
+            Vin.vehicle.has(or_(Vehicle.make.ilike(f"%{value}%"), Vehicle.model.ilike(f"%{value}%"),
+                                cast(Vehicle.year, String).ilike(f"%{value}%"))),
+        )),
+        "partslinks": lambda value: Oem.partslinks.any(Partslink.partslink.ilike(f"%{value}%")),
+        "interchanges": lambda value: Oem.interchanges.any(Interchange.interchange.ilike(f"%{value}%")),
+    }
+    stmt = apply_column_filters(stmt, filters, columns, empty_conditions, value_conditions)
+    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (Oem.updated_at.desc(), Oem.id.desc()))
+    items = db.scalars(stmt.options(selectinload(Oem.vins).joinedload(Vin.vehicle))).all()
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("OEM")
     sheet.append(["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"])
     for item in items:
-        vehicle = item.vin.vehicle
-        sheet.append([item.oem, item.vin.vin, vehicle.year, vehicle.make, vehicle.model,
-                      item.description, item.notes])
+        for vin_item in sorted(item.vins, key=lambda value: value.vin_key) or [None]:
+            vehicle = vin_item.vehicle if vin_item else None
+            sheet.append([item.oem, vin_item.vin if vin_item else None,
+                          vehicle.year if vehicle else None, vehicle.make if vehicle else None,
+                          vehicle.model if vehicle else None, item.description, item.notes])
     log_activity(db, user, "export_oems", f"exported {len(items)} OEM records")
     return excel_response(workbook, "oems.xlsx")
 
@@ -258,20 +359,15 @@ def export_oems_by_list(
 
     all_oems = {oem_key for oem_key, vin_key in keys if vin_key is None}
     requested_vins = {(oem_key, vin_key) for oem_key, vin_key in keys if vin_key is not None}
-    stmt = query_oems("").options(joinedload(Oem.vin).joinedload(Vin.vehicle))
     conditions = [Oem.oem_key.in_(all_oems)] if all_oems else []
     conditions.extend(
-        and_(Oem.oem_key == oem_key, Vin.vin_key == vin_key)
+        Oem.vins.any(Vin.vin_key == vin_key) & (Oem.oem_key == oem_key)
         for oem_key, vin_key in requested_vins
     )
+    stmt = select(Oem).options(selectinload(Oem.vins).joinedload(Vin.vehicle))
     stmt = stmt.where(or_(*conditions)) if conditions else stmt.where(False)
-    items = db.scalars(stmt.order_by(Oem.oem_key, Vin.vin_key)).all()
-
-    items_by_oem: dict[str, list[Oem]] = {}
-    items_by_oem_vin: dict[tuple[str, str], Oem] = {}
-    for item in items:
-        items_by_oem.setdefault(item.oem_key, []).append(item)
-        items_by_oem_vin[(item.oem_key, item.vin.vin_key)] = item
+    items = db.scalars(stmt.order_by(Oem.oem_key)).all()
+    items_by_oem = {item.oem_key: item for item in items}
 
     output = Workbook(write_only=True)
     sheet = output.create_sheet("OEM")
@@ -279,21 +375,25 @@ def export_oems_by_list(
     exported_count = 0
     for uploaded_oem, oem_key, vin_key in requested_rows:
         if vin_key is None:
-            matched_items = items_by_oem.get(oem_key, [])
-            if matched_items:
-                for item in matched_items:
-                    vehicle = item.vin.vehicle
-                    sheet.append([item.oem, item.vin.vin, vehicle.year, vehicle.make, vehicle.model,
+            item = items_by_oem.get(oem_key)
+            if item is not None and item.vins:
+                for vin_item in sorted(item.vins, key=lambda value: value.vin_key):
+                    vehicle = vin_item.vehicle
+                    sheet.append([item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
                                   item.description, item.notes])
                     exported_count += 1
+            elif item is not None:
+                sheet.append([item.oem, None, None, None, None, item.description, item.notes])
+                exported_count += 1
             else:
                 sheet.append([uploaded_oem, None, None, None, None, None, None])
                 exported_count += 1
         else:
-            item = items_by_oem_vin.get((oem_key, vin_key))
-            if item is not None:
-                vehicle = item.vin.vehicle
-                sheet.append([item.oem, item.vin.vin, vehicle.year, vehicle.make, vehicle.model,
+            item = items_by_oem.get(oem_key)
+            vin_item = next((value for value in item.vins if value.vin_key == vin_key), None) if item else None
+            if item is not None and vin_item is not None:
+                vehicle = vin_item.vehicle
+                sheet.append([item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
                               item.description, item.notes])
             else:
                 sheet.append([uploaded_oem, vin_key, None, None, None, None, None])
@@ -368,14 +468,12 @@ def import_oems(
                             result.errors.append(f"Row {row_number}: duplicate OEM {oem} and VIN {vin_value} in workbook")
                         continue
                     seen.add(duplicate_key)
-                    existing = db.scalar(select(Oem).where(
-                        Oem.id_vin == vin_item.id,
-                        Oem.oem_key == oem_key,
-                    ))
+                    existing = db.scalar(select(Oem).where(Oem.oem_key == oem_key))
+                    created = existing is None
                     if existing is None:
-                        db.add(Oem(id_vin=vin_item.id, oem=oem, oem_key=oem_key,
-                                   description=description, notes=notes,
-                                   created_by=user.id, updated_by=user.id))
+                        existing = Oem(oem=oem, oem_key=oem_key, description=description, notes=notes,
+                                       created_by=user.id, updated_by=user.id)
+                        db.add(existing)
                         db.flush()
                         result.created += 1
                     else:
@@ -383,6 +481,11 @@ def import_oems(
                         if changed:
                             existing.oem, existing.description, existing.notes = oem, description, notes
                             existing.updated_by = user.id
+                    linked = vin_item not in existing.vins
+                    if linked:
+                        existing.vins.append(vin_item)
+                    if not created:
+                        changed = changed or linked
                         result.updated += int(changed)
                         result.skipped += int(not changed)
             except ValueError as error:

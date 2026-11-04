@@ -614,13 +614,16 @@ def _build_ccc_vendor_dashboard(
         history.sort(key=lambda item: item[0])
 
     by_description: dict[str, dict[str, Any]] = {}
+    description_oems: dict[tuple[str, str], set[str]] = defaultdict(set)
     by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
+    by_day_oem: dict[date, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    vendor_oems: dict[str, set[str]] = defaultdict(set)
     total_gap = Decimal("0")
-    wins = losses = 0
+    crawl_wins = crawl_losses = 0
     for row in rows:
         won = row["outcome"] == "won"
-        wins += int(won)
-        losses += int(not won)
+        crawl_wins += int(won)
+        crawl_losses += int(not won)
         total_gap += row["price"] - row["lowest_price"]
         description_key = row["description"].casefold()
         description_item = by_description.setdefault(description_key, {
@@ -628,7 +631,11 @@ def _build_ccc_vendor_dashboard(
         })
         description_item["wins"] += int(won)
         description_item["losses"] += int(not won)
-        by_day[row["crawl_date"].date()].append(row)
+        description_oems[(description_key, row["outcome"])].add(row["oem"])
+        vendor_oems[row["outcome"]].add(row["oem"])
+        crawl_day = row["crawl_date"].date()
+        by_day[crawl_day].append(row)
+        by_day_oem[crawl_day][row["oem"]].append(row)
 
     details = []
     for row in detail_rows:
@@ -638,6 +645,7 @@ def _build_ccc_vendor_dashboard(
         previous = history[previous_index] if previous_index >= 0 else None
         previous_data = previous[1] if previous else {}
         details.append({
+            "vendor": row["vendor"],
             "oem": row["oem"],
             "vin": row["vin"],
             "description": row["description"],
@@ -655,13 +663,23 @@ def _build_ccc_vendor_dashboard(
 
     descriptions = []
     for item in by_description.values():
-        opportunities = item["wins"] + item["losses"]
+        description_key = item["description"].casefold()
+        item["won_oem_count"] = len(description_oems[(description_key, "won")])
+        item["lost_oem_count"] = len(description_oems[(description_key, "lost")])
+        item["crawl_wins"] = item["wins"]
+        item["crawl_losses"] = item["losses"]
+        item["crawl_opportunities"] = item["wins"] + item["losses"]
+        item["crawl_win_rate"] = round(item["wins"] / item["crawl_opportunities"] * 100, 1) if item["crawl_opportunities"] else 0
+        item["oem_opportunities"] = item["won_oem_count"] + item["lost_oem_count"]
+        item["oem_win_rate"] = round(item["won_oem_count"] / item["oem_opportunities"] * 100, 1) if item["oem_opportunities"] else 0
+        item["wins"] = item["won_oem_count"]
+        item["losses"] = item["lost_oem_count"]
         descriptions.append({
             **item,
-            "opportunities": opportunities,
-            "win_rate": round(item["wins"] / opportunities * 100, 1) if opportunities else 0,
+            "opportunities": item["oem_opportunities"],
+            "win_rate": item["oem_win_rate"],
         })
-    descriptions.sort(key=lambda item: (-item["opportunities"], item["description"].casefold()))
+    descriptions.sort(key=lambda item: (-item["oem_opportunities"], item["description"].casefold()))
 
     trend = []
     for crawl_day, day_rows in sorted(by_day.items()):
@@ -675,22 +693,48 @@ def _build_ccc_vendor_dashboard(
             "offers": len(day_rows),
         })
 
+    trend_oem = []
+    for crawl_day, day_oems in sorted(by_day_oem.items()):
+        oem_averages = [
+            (
+                sum((item["price"] for item in oem_rows), Decimal("0")) / Decimal(len(oem_rows)),
+                sum((item["lowest_price"] for item in oem_rows), Decimal("0")) / Decimal(len(oem_rows)),
+            )
+            for oem_rows in day_oems.values()
+        ]
+        oem_count = Decimal(len(oem_averages))
+        average_price = sum((item[0] for item in oem_averages), Decimal("0")) / oem_count
+        average_lowest = sum((item[1] for item in oem_averages), Decimal("0")) / oem_count
+        trend_oem.append({
+            "date": crawl_day.isoformat(),
+            "average_price": str(average_price.quantize(Decimal("0.01"))),
+            "average_lowest_price": str(average_lowest.quantize(Decimal("0.01"))),
+            "oems": len(oem_averages),
+        })
+
     return {
         "vendor": vendor.strip(),
         "from_date": from_date,
         "to_date": to_date,
         "priced_offers": len(rows),
-        "wins": wins,
-        "losses": losses,
-        "win_rate": round(wins / len(rows) * 100, 1) if rows else 0,
+        "wins": len(vendor_oems["won"]),
+        "losses": len(vendor_oems["lost"]),
+        "win_rate": round(
+            len(vendor_oems["won"]) / (len(vendor_oems["won"]) + len(vendor_oems["lost"])) * 100, 1
+        ) if vendor_oems["won"] or vendor_oems["lost"] else 0,
+        "crawl_wins": crawl_wins,
+        "crawl_losses": crawl_losses,
+        "crawl_win_rate": round(crawl_wins / (crawl_wins + crawl_losses) * 100, 1)
+        if crawl_wins + crawl_losses else 0,
         "average_gap": str((total_gap / Decimal(len(rows))).quantize(Decimal("0.01"))) if rows else "0.00",
         "average_vendor_price": str((sum((row["price"] for row in rows), Decimal("0")) / Decimal(len(rows))).quantize(Decimal("0.01"))) if rows else "0.00",
         "average_market_low": str((sum((row["lowest_price"] for row in rows), Decimal("0")) / Decimal(len(rows))).quantize(Decimal("0.01"))) if rows else "0.00",
         "oem_count": len({row["oem"] for row in rows}),
         "vin_count": len({row["vin"] for row in rows}),
         "crawl_count": len({row["crawl_date"] for row in rows}),
-        "opportunity_count": wins + losses,
+        "opportunity_count": len(vendor_oems["won"]) + len(vendor_oems["lost"]),
         "trend": trend[-90:],
+        "trend_oem": trend_oem[-90:],
         "descriptions": descriptions,
         "details": details,
         "details_total": len(rows),
@@ -702,20 +746,42 @@ def export_ccc_vendor_dashboard(vendor: str = Query(..., min_length=1), from_dat
     dashboard = _build_ccc_vendor_dashboard(vendor, from_date, to_date, description, db, details_limit=None)
     workbook = Workbook(write_only=True)
     summary = workbook.create_sheet("Summary")
-    summary.append(["Vendor", "From Date", "To Date", "Description", "Priced Offers", "Lowest-Price Wins", "Losses", "Win Rate", "Average Gap From Lowest", "Average Vendor Price", "Average Market Lowest"])
-    summary.append([dashboard["vendor"], dashboard["from_date"], dashboard["to_date"], description or "All descriptions", dashboard["priced_offers"], dashboard["wins"], dashboard["losses"], dashboard["win_rate"], dashboard["average_gap"], dashboard["average_vendor_price"], dashboard["average_market_low"]])
+    summary.append([
+        "Vendor", "From Date", "To Date", "Description", "Priced Offers",
+        "OEM Wins", "OEM Losses", "OEM Win Rate", "Crawl Wins", "Crawl Losses",
+        "Crawl Win Rate", "Average Gap From Lowest", "Average Vendor Price",
+        "Average Market Lowest",
+    ])
+    summary.append([
+        dashboard["vendor"], dashboard["from_date"], dashboard["to_date"],
+        description or "All descriptions", dashboard["priced_offers"], dashboard["wins"],
+        dashboard["losses"], dashboard["win_rate"], dashboard["crawl_wins"],
+        dashboard["crawl_losses"], dashboard["crawl_win_rate"], dashboard["average_gap"],
+        dashboard["average_vendor_price"], dashboard["average_market_low"],
+    ])
     trend = workbook.create_sheet("Price Trend")
     trend.append(["Crawl Date", "Vendor Average Price", "Market Lowest Average Price", "Offers"])
     for item in dashboard["trend"]:
         trend.append([item["date"], item["average_price"], item["average_lowest_price"], item["offers"]])
+    oem_trend = workbook.create_sheet("OEM Price Trend")
+    oem_trend.append(["Crawl Date", "Vendor Average Price per OEM", "Market Lowest Average Price per OEM", "Distinct OEMs"])
+    for item in dashboard["trend_oem"]:
+        oem_trend.append([item["date"], item["average_price"], item["average_lowest_price"], item["oems"]])
     performance = workbook.create_sheet("Description Performance")
-    performance.append(["Description", "Wins", "Losses", "Opportunities", "Win Rate"])
+    performance.append([
+        "Description", "OEM Wins", "OEM Losses", "OEM Opportunities", "OEM Win Rate",
+        "Crawl Wins", "Crawl Losses", "Crawl Opportunities", "Crawl Win Rate",
+    ])
     for item in dashboard["descriptions"]:
-        performance.append([item["description"], item["wins"], item["losses"], item["opportunities"], item["win_rate"]])
+        performance.append([
+            item["description"], item["won_oem_count"], item["lost_oem_count"],
+            item["oem_opportunities"], item["oem_win_rate"], item["crawl_wins"],
+            item["crawl_losses"], item["crawl_opportunities"], item["crawl_win_rate"],
+        ])
     details = workbook.create_sheet("Recent Crawl Details")
-    details.append(["Crawl Date", "OEM", "VIN", "Description", "Vendor Price", "Lowest Vendor", "Lowest Price", "Gap", "Previous Crawl", "Previous Vendor Price", "Previous Lowest Vendor", "Previous Lowest Price", "Result"])
+    details.append(["Crawl Date", "Vendor", "OEM", "VIN", "Description", "Vendor Price", "Lowest Vendor", "Lowest Price", "Gap", "Previous Crawl", "Previous Vendor Price", "Previous Lowest Vendor", "Previous Lowest Price", "Result"])
     for item in dashboard["details"]:
-        details.append([item["crawl_date"], item["oem"], item["vin"], item["description"], item["price"], item["lowest_vendors"], item["lowest_price"], item["gap"], item["previous_crawl_date"], item["previous_vendor_price"], item["previous_lowest_vendors"], item["previous_lowest_price"], item["outcome"]])
+        details.append([item["crawl_date"], item["vendor"], item["oem"], item["vin"], item["description"], item["price"], item["lowest_vendors"], item["lowest_price"], item["gap"], item["previous_crawl_date"], item["previous_vendor_price"], item["previous_lowest_vendors"], item["previous_lowest_price"], item["outcome"]])
     log_activity(db, user, "export_ccc_vendor_dashboard", f"exported CCC dashboard for {vendor.strip()}")
     stream = BytesIO()
     workbook.save(stream)

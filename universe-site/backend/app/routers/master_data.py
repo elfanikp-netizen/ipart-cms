@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+import json
 from io import BytesIO
 import math
 import re
@@ -7,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import String, cast, func, or_, select, tuple_
+from sqlalchemy.sql.sqltypes import String as StringType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -30,6 +32,55 @@ def normalize_text(value: object, label: str) -> str:
 
 def normalized_key(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def apply_column_filters(
+    stmt,
+    filters_json: str,
+    columns: dict,
+    empty_conditions: dict | None = None,
+    value_conditions: dict | None = None,
+):
+    if not filters_json:
+        return stmt
+    try:
+        filters = json.loads(filters_json)
+    except json.JSONDecodeError as error:
+        raise HTTPException(400, "Invalid column filters") from error
+    if not isinstance(filters, dict):
+        raise HTTPException(400, "Column filters must be an object")
+    empty_conditions = empty_conditions or {}
+    value_conditions = value_conditions or {}
+    for name, options in filters.items():
+        if name not in columns or not isinstance(options, dict):
+            raise HTTPException(400, f"Unsupported column filter: {name}")
+        column = columns[name]
+        mode = options.get("mode", "any")
+        condition = empty_conditions.get(name)
+        if condition is None:
+            condition = or_(column.is_(None), column == "") if isinstance(column.type, StringType) else column.is_(None)
+        if mode == "empty":
+            stmt = stmt.where(condition)
+        elif mode == "nonempty":
+            stmt = stmt.where(~condition)
+        elif mode != "any":
+            raise HTTPException(400, f"Unsupported empty filter mode: {mode}")
+        value = str(options.get("value", "")).strip()
+        if value:
+            predicate = value_conditions.get(name)
+            stmt = stmt.where(predicate(value) if predicate else cast(column, String).ilike(f"%{value}%"))
+    return stmt
+
+
+def apply_column_sort(stmt, sort_by: str, sort_dir: str, columns: dict, default):
+    if not sort_by:
+        return stmt.order_by(*default)
+    if sort_by not in columns:
+        raise HTTPException(400, f"Unsupported sort column: {sort_by}")
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(400, "Sort direction must be asc or desc")
+    column = columns[sort_by]
+    return stmt.order_by(column.asc() if sort_dir == "asc" else column.desc())
 
 
 def normalize_vin(value: object) -> str:
@@ -163,9 +214,11 @@ def vehicle_options(
              "label": f"{row.year} {row.make} {row.model}"} for row in rows]
 
 
-def paginate(db: Session, stmt, page: int, page_size: int, order_by):
+def paginate(db: Session, stmt, page: int, page_size: int, order_by=None):
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
-    items = db.scalars(stmt.order_by(*order_by).offset((page - 1) * page_size).limit(page_size)).all()
+    if order_by:
+        stmt = stmt.order_by(*order_by)
+    items = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).all()
     return {"items": items, "page": page, "page_size": page_size, "total": total,
             "pages": math.ceil(total / page_size) if total else 0}
 
@@ -186,13 +239,26 @@ def list_vehicles(
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     search: str = "",
-    year: int | None = None,
-    make: str = "",
+    filters: str = "",
+    sort_by: str = "",
+    sort_dir: str = "asc",
     db: Session = Depends(get_db),
     _: PortalUser = Depends(get_current_user),
 ):
-    result = paginate(db, query_vehicles(db, search, year, make), page, page_size,
-                      (Vehicle.created_at.desc(),))
+    vin_count = select(func.count(Vin.id)).where(Vin.id_vehicle == Vehicle.id).scalar_subquery()
+    columns = {
+        "year": Vehicle.year,
+        "make": Vehicle.make,
+        "model": Vehicle.model,
+        "vin_count": vin_count,
+        "updated_at": Vehicle.updated_at,
+    }
+    stmt = apply_column_filters(
+        query_vehicles(db, search, None, ""), filters, columns,
+        empty_conditions={"vin_count": vin_count == 0},
+    )
+    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (Vehicle.created_at.desc(),))
+    result = paginate(db, stmt, page, page_size)
     ids = [vehicle.id for vehicle in result["items"]]
     counts = dict(db.execute(select(Vin.id_vehicle, func.count(Vin.id)).where(Vin.id_vehicle.in_(ids))
                              .group_by(Vin.id_vehicle)).all()) if ids else {}
@@ -259,10 +325,24 @@ def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user: PortalU
 
 @router.get("/vehicles/export")
 def export_vehicles(
-    search: str = "", year: int | None = None, make: str = "",
+    search: str = "", filters: str = "", sort_by: str = "", sort_dir: str = "asc",
     db: Session = Depends(get_db), _: PortalUser = Depends(get_current_user),
 ):
-    rows = db.scalars(query_vehicles(db, search, year, make).order_by(Vehicle.year, Vehicle.make_key, Vehicle.model_key)).all()
+    vin_count = select(func.count(Vin.id)).where(Vin.id_vehicle == Vehicle.id).scalar_subquery()
+    columns = {
+        "year": Vehicle.year,
+        "make": Vehicle.make,
+        "model": Vehicle.model,
+        "vin_count": vin_count,
+        "updated_at": Vehicle.updated_at,
+    }
+    stmt = apply_column_filters(
+        query_vehicles(db, search, None, ""), filters, columns,
+        empty_conditions={"vin_count": vin_count == 0},
+    )
+    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns,
+                             (Vehicle.created_at.desc(), Vehicle.id.desc()))
+    rows = db.scalars(stmt).all()
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Vehicle")
     sheet.append(["Year", "Make", "Model"])
@@ -305,15 +385,21 @@ def import_vehicles(file: UploadFile = File(...), db: Session = Depends(get_db),
 @router.get("/vins")
 def list_vins(
     page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
-    search: str = "", year: int | None = None, make: str = "", model: str = "", vehicle_id: int | None = None,
+    search: str = "", filters: str = "", sort_by: str = "", sort_dir: str = "asc",
     db: Session = Depends(get_db), _: PortalUser = Depends(get_current_user),
 ):
-    stmt = query_vins(db, search, year, make, model)
-    if vehicle_id is not None:
-        stmt = stmt.where(Vin.id_vehicle == vehicle_id)
+    stmt = query_vins(db, search, None, "", "")
+    columns = {
+        "year": Vehicle.year,
+        "make": Vehicle.make,
+        "model": Vehicle.model,
+        "vin": Vin.vin,
+        "updated_at": Vin.updated_at,
+    }
+    stmt = apply_column_filters(stmt, filters, columns)
+    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (Vin.created_at.desc(),))
     stmt = stmt.options(joinedload(Vin.vehicle))
-    result = paginate(db, stmt, page, page_size,
-                      (Vin.created_at.desc(),))
+    result = paginate(db, stmt, page, page_size)
     result["items"] = [VinOut.model_validate(item) for item in result["items"]]
     return result
 
@@ -376,14 +462,21 @@ def delete_vin(vin_id: int, db: Session = Depends(get_db), user: PortalUser = De
 
 @router.get("/vins/export")
 def export_vins(
-    search: str = "", year: int | None = None, make: str = "", model: str = "", vehicle_id: int | None = None,
+    search: str = "", filters: str = "", sort_by: str = "", sort_dir: str = "asc",
     db: Session = Depends(get_db), _: PortalUser = Depends(get_current_user),
 ):
-    stmt = query_vins(db, search, year, make, model)
-    if vehicle_id is not None:
-        stmt = stmt.where(Vin.id_vehicle == vehicle_id)
-    rows = db.scalars(stmt
-                      .order_by(Vehicle.year, Vehicle.make_key, Vehicle.model_key, Vin.vin_key)).all()
+    stmt = query_vins(db, search, None, "", "")
+    columns = {
+        "year": Vehicle.year,
+        "make": Vehicle.make,
+        "model": Vehicle.model,
+        "vin": Vin.vin,
+        "updated_at": Vin.updated_at,
+    }
+    stmt = apply_column_filters(stmt, filters, columns)
+    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns,
+                             (Vin.created_at.desc(), Vin.id.desc()))
+    rows = db.scalars(stmt.options(joinedload(Vin.vehicle))).all()
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("VIN")
     sheet.append(["Year", "Make", "Model", "VIN"])

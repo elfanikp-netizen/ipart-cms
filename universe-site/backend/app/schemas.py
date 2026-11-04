@@ -59,22 +59,28 @@ class VinOut(VinFields):
     updated_at: datetime
 
 
-class OemOut(BaseModel):
+class OemVinOut(BaseModel):
     id: int
-    id_vin: int
-    oem: str
-    description: str
-    notes: str
     vin: str
     year: int
     make: str
     model: str
+
+
+class OemOut(BaseModel):
+    id: int
+    oem: str
+    description: str
+    notes: str
+    vins: list[OemVinOut] = Field(default_factory=list)
+    partslinks: list[str] = Field(default_factory=list)
+    interchanges: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
 
 class OemFields(BaseModel):
-    id_vin: int
+    id_vin: int | None = None
     oem: str = Field(min_length=1, max_length=150)
     description: str = Field(default="", max_length=4000)
     notes: str = Field(default="", max_length=4000)
@@ -85,7 +91,7 @@ class OemCreate(OemFields):
 
 
 class OemUpdate(OemFields):
-    pass
+    source_id_vin: int | None = None
 
 
 class OemImportOut(BaseModel):

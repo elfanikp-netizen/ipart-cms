@@ -9,7 +9,13 @@ identity and Scraper run data. For the full platform setup, see the
 
 - `vehicle`: unique Year/Make/Model, normalized for case and whitespace.
 - `vin`: references a vehicle through `id_vehicle`; VINs are unique per vehicle.
-- `oem`: references a VIN through `id_vin`; OEM numbers are unique per VIN.
+- `oem`: canonical OEM part records, unique by normalized OEM number.
+- `oem_vin`: many-to-many OEM-to-VIN fitments; an OEM can fit multiple VINs.
+- `partslink` and `interchange`: independent normalized number catalogs.
+- `oem_partslink` and `oem_interchange`: independent many-to-many mappings
+  between OEM parts and each catalog. Partslink-to-Interchange pairings are
+  derived by joining both mapping tables through OEM and exposed by the
+  `v_partslink_interchange` database view and Cross-reference screen.
 - `universe.ccc_market_data`: CCC crawl summaries and decoded market results,
   unique by OEM, VIN, and crawl date.
 - PostgreSQL target: database `ipart`, schema `universe`.
@@ -19,8 +25,11 @@ identity and Scraper run data. For the full platform setup, see the
 
 ## Master Data
 
-The Vehicle, VIN, and OEM lists use 10 rows per page. They support text search
-across their displayed fields and related vehicle data.
+The Vehicle, VIN, OEM, Partslink, and Interchange lists use 10 rows per page.
+They support text search across their displayed fields and related data.
+Excel exports use the current search, column filters, and sort order and export
+all matching rows, not only the current page. The Cross-reference list supports
+the same filtered export behavior.
 
 Vehicle import/export uses exactly these Excel columns:
 
@@ -44,11 +53,35 @@ OEM import/export uses these columns:
 
 OEM and VIN are required for import. Year, Make, and Model are optional as a
 group: when present, import resolves or creates the vehicle and its VIN; when
-omitted, the VIN must already identify exactly one vehicle. An OEM/VIN match
-updates the existing record. OEM export can use the current search or an
-uploaded list workbook containing an `OEM` column and optional `VIN` column;
-OEM-only rows export all related VIN records, while OEM plus VIN narrows the
-match to that specific vehicle.
+omitted, the VIN must already identify exactly one vehicle. Repeated normalized
+OEM numbers update one canonical record and accumulate VIN fitments. OEM export
+can use the current search or an uploaded list workbook containing an `OEM`
+column and optional `VIN` column; OEM-only rows export all related VIN records,
+while OEM plus VIN narrows the match to that specific fitment.
+
+Partslink and Interchange imports use the same wide workbook layout. The
+`PARTSLINK` column is required; numbered Interchange and OEM columns are
+optional, and header matching is case-insensitive:
+
+| PARTSLINK | INTERCHANGE 1 | INTERCHANGE 2 | ... | INTERCHANGE 5 | OEM 1 | OEM 2 | ... | OEM 5 | Description |
+|---|---|---|---|---|---|---|---|---|---|
+| a | int1a | int2a | ... | int5a | oem1a | oem2a | ... | oem5a | example part |
+
+Imports create or update the catalog number and canonical OEM, then add their
+mapping without duplicating either record or link. Each numbered Interchange
+column pairs only with the OEM column having the same number. Each OEM is linked
+to the row's Partslink and, when its matching Interchange slot is populated, to
+that Interchange as well. This makes the Partslink/Interchange cross-reference
+derive through the shared OEM instead of creating direct catalog-to-catalog
+links. The description is updated on related catalog and OEM records when
+supplied. Export-all includes every catalog number and its OEM mappings
+(including unmapped catalog entries); export-by-OEM takes an Excel workbook
+with an `OEM` column and returns matching catalog mappings. Both `.xlsx` and
+`.xlsm` workbooks are supported.
+
+On startup, existing per-VIN OEM rows are consolidated by normalized OEM number
+into canonical OEM records. All existing VIN fitments and distinct descriptions
+and notes are retained by the migration.
 
 ## Market Data: CCC
 
@@ -131,6 +164,15 @@ All routes are under `/api/universe` and require a valid Portal session:
 | `GET /oems/export` | Export all OEMs or those matching a search |
 | `POST /oems/export-by-list` | Export OEMs matching an uploaded OEM/VIN workbook |
 | `POST /oems/import` | Import OEMs and resolve related vehicles and VINs |
+| `GET /partslinks` | Search and page Partslink numbers with OEM mappings |
+| `POST /partslinks/import` | Import Partslink, OEM, and description columns |
+| `GET /partslinks/export` | Export all Partslink-to-OEM mappings |
+| `POST /partslinks/export-by-oem` | Export Partslink mappings for an uploaded OEM list |
+| `GET /interchanges` | Search and page Interchange numbers with OEM mappings |
+| `POST /interchanges/import` | Import Interchange, OEM, and description columns |
+| `GET /interchanges/export` | Export all Interchange-to-OEM mappings |
+| `POST /interchanges/export-by-oem` | Export Interchange mappings for an uploaded OEM list |
+| `GET /partslink-interchange` | Search and page derived Partslink/Interchange pairs |
 | `GET /market/ccc` | Filter and page CCC market data, newest crawl first |
 | `GET /market/ccc/filters` | List distinct CCC OEM, VIN, description, and vendor filters |
 | `POST /market/ccc/import` | Import or replace CCC market data from Excel |

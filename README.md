@@ -13,8 +13,8 @@ Scraper CMS is mounted at `/scrapper/`; Universe Master Data is mounted at
 | Portal identity API | 8001 | Shared login/logout, users, profile, shared activity |
 | Scraper UI | 5173 | Crawler dashboard, run details, logs, downloads |
 | Scraper API | 8000 | Crawler operations, runs, run artifacts, scraper activity writes |
-| Universe UI | 5175 | Vehicle and VIN master data |
-| Universe API | 8002 | Vehicle/VIN CRUD, filtering, Excel import/export |
+| Universe UI | 5175 | Vehicle, VIN, OEM, Partslink, and Interchange master data |
+| Universe API | 8002 | Universe master-data CRUD, filtering, and Excel import/export |
 
 The portal Vite server proxies identity endpoints to the Portal API, crawler
 and run endpoints to the Scraper API, and `/scrapper/` to the Scraper UI. It
@@ -57,8 +57,10 @@ first Portal API startup, `superadmin` / `12345678` is created only if no user
 exists. Change that password before real use.
 
 Universe domain records use PostgreSQL database `ipart`, schema `universe`,
-with `vehicle` and `vin` tables. VIN rows reference vehicles through
-`id_vehicle`; this schema is separate from `global` identity and scraper runs.
+with vehicle, VIN, canonical OEM, Partslink, and Interchange master data. VIN
+fitments and OEM catalog mappings are stored separately; Partslink/Interchange
+pairs are derived through OEM. This schema is separate from `global` identity
+and scraper runs.
 
 ## Start Locally
 

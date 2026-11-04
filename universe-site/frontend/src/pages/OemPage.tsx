@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { client, deleteOem, downloadOemsByList, downloadOemsExcel, errorText, importOemsExcel } from "../api";
 import type { Oem, OemImportSummary, Page } from "../api";
 import OemForm from "../components/OemForm";
+import ColumnHeader from "../components/ColumnHeader";
+import type { ColumnFilterValue } from "../components/ColumnHeader";
 
 const PAGE_SIZE = 10;
 const EMPTY_PAGE: Page<Oem> = { items: [], page: 1, page_size: PAGE_SIZE, total: 0, pages: 0 };
@@ -10,6 +12,8 @@ export default function OemPage() {
   const [data, setData] = useState(EMPTY_PAGE);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilterValue>>({});
+  const [sort, setSort] = useState<{ field: string; direction: "asc" | "desc" }>({ field: "", direction: "asc" });
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -25,7 +29,7 @@ export default function OemPage() {
     setLoading(true);
     try {
       const response = await client.get<Page<Oem>>("/api/universe/oems", {
-        params: { page, page_size: PAGE_SIZE, search },
+        params: { page, page_size: PAGE_SIZE, search, filters: JSON.stringify(columnFilters), sort_by: sort.field, sort_dir: sort.direction },
       });
       setData(response.data);
       setError("");
@@ -39,7 +43,17 @@ export default function OemPage() {
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 180);
     return () => window.clearTimeout(timer);
-  }, [page, search]);
+  }, [page, search, columnFilters, sort]);
+
+  const updateColumnFilter = (field: string, value: ColumnFilterValue) => {
+    setColumnFilters((current) => ({ ...current, [field]: value }));
+    setPage(1);
+  };
+
+  const updateSort = (field: string) => {
+    setSort((current) => ({ field, direction: current.field === field && current.direction === "asc" ? "desc" : "asc" }));
+    setPage(1);
+  };
 
   const onImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -63,7 +77,7 @@ export default function OemPage() {
     setExporting(true);
     setError("");
     try {
-      await downloadOemsExcel(search);
+      await downloadOemsExcel({ search, filters: JSON.stringify(columnFilters), sort_by: sort.field, sort_dir: sort.direction });
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -92,7 +106,7 @@ export default function OemPage() {
   };
 
   const remove = async (item: Oem) => {
-    if (!window.confirm(`Delete OEM ${item.oem} linked to VIN ${item.vin}?`)) return;
+    if (!window.confirm(`Delete OEM ${item.oem}, all VIN fitments, and catalog mappings?`)) return;
     setBusyId(item.id);
     setError("");
     try {
@@ -117,6 +131,7 @@ export default function OemPage() {
       </div>
       <div className="toolbar-row">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search OEM, VIN, vehicle" /></label>
+        <button className="text-button" onClick={() => { setSearch(""); setColumnFilters({}); setPage(1); }}>Clear filters</button>
         <div className="toolbar-spacer" />
         <button className="primary-button" onClick={() => { setNotice(""); setModal("new"); }}>＋ Add OEM</button>
         <label className={`outline-button file-button${importing ? " disabled" : ""}`}>
@@ -130,10 +145,10 @@ export default function OemPage() {
       {summary && <div className="import-summary"><div><strong>Import complete</strong><span>{summary.created} created</span><span>{summary.updated} updated</span><span>{summary.skipped} unchanged/skipped</span><span>{summary.vehicles_created} vehicles added</span><span>{summary.vins_created} VINs added</span></div>{summary.errors.length > 0 && <details><summary>{summary.errors.length} row issue(s)</summary><ul>{summary.errors.map((item) => <li key={item}>{item}</li>)}</ul></details>}<button onClick={() => setSummary(null)} aria-label="Dismiss import report">×</button></div>}
       <div className="table-frame">
         <table>
-          <thead><tr><th>OEM</th><th>VIN</th><th>YEAR</th><th>MAKE</th><th>MODEL</th><th>DESCRIPTION</th><th>UPDATED</th><th aria-label="Actions" /></tr></thead>
+          <thead><tr>{[["oem", "OEM"], ["vins", "VIN FITMENTS"], ["partslinks", "PARTSLINK"], ["interchanges", "INTERCHANGE"], ["description", "DESCRIPTION"], ["updated_at", "UPDATED"]].map(([field, label]) => <ColumnHeader key={field} field={field} label={label} filter={columnFilters[field] ?? { value: "", mode: "any" }} sort={sort} onFilter={updateColumnFilter} onSort={updateSort} />)}<th aria-label="Actions" /></tr></thead>
           <tbody>
-            {loading ? <tr><td className="empty-state" colSpan={8}>Loading records…</td></tr> : data.items.length === 0 ? <tr><td className="empty-state" colSpan={8}>No OEM records match this search.</td></tr> : data.items.map((item) => <tr key={item.id}>
-              <td className="vin-cell">{item.oem}</td><td className="vin-cell">{item.vin}</td><td className="year-cell">{item.year}</td><td>{item.make}</td><td>{item.model}</td><td>{item.description}</td><td className="updated-cell">{new Date(item.updated_at).toLocaleDateString()}</td><td className="row-actions"><button onClick={() => { setNotice(""); setModal(item); }}>Edit</button><button className="delete-action" disabled={busyId === item.id} onClick={() => void remove(item)}>Delete</button></td>
+            {loading ? <tr><td className="empty-state" colSpan={7}>Loading records…</td></tr> : data.items.length === 0 ? <tr><td className="empty-state" colSpan={7}>No OEM records match this search.</td></tr> : data.items.map((item) => <tr key={item.id}>
+              <td className="vin-cell">{item.oem}</td><td>{item.vins.map((vin) => `${vin.vin} · ${vin.year} ${vin.make} ${vin.model}`).join("; ") || "—"}</td><td>{item.partslinks.join(", ") || "—"}</td><td>{item.interchanges.join(", ") || "—"}</td><td>{item.description}</td><td className="updated-cell">{new Date(item.updated_at).toLocaleDateString()}</td><td className="row-actions"><button onClick={() => { setNotice(""); setModal(item); }}>Edit</button><button className="delete-action" disabled={busyId === item.id} onClick={() => void remove(item)}>Delete</button></td>
             </tr>)}
           </tbody>
         </table>

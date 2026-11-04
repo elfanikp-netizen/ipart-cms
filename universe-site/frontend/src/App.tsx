@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { client, deleteRecord, downloadExcel, downloadVinExportByVehicleList, errorText, getFilterOptions, getPage, getVehicleOptions, importExcel, saveVehicle, saveVin } from "./api";
-import type { FilterOptions, ImportSummary, Page, Vehicle, VehicleOption, Vin } from "./api";
+import { client, deleteRecord, downloadExcel, downloadVinExportByVehicleList, errorText, getPage, importExcel, saveVehicle, saveVin } from "./api";
+import type { ImportSummary, Page, Vehicle, Vin } from "./api";
 import CccMarketPage from "./pages/CccMarketPage";
 import ActivityPage from "./pages/ActivityPage";
 import OemPage from "./pages/OemPage";
+import CatalogPage from "./pages/CatalogPage";
+import CatalogPairsPage from "./pages/CatalogPairsPage";
 import SearchSelect from "./components/SearchSelect";
+import ColumnHeader from "./components/ColumnHeader";
+import type { ColumnFilterValue } from "./components/ColumnHeader";
 
-type Dataset = "vehicles" | "vins" | "oem" | "ccc";
+type Dataset = "vehicles" | "vins" | "oem" | "partslinks" | "interchanges" | "pairs" | "ccc";
 type MasterDataset = "vehicles" | "vins";
 type VehicleDraft = { year: string; make: string; model: string; notes: string };
 type VinDraft = { id_vehicle: string; vin: string; notes: string };
@@ -22,6 +26,9 @@ function App() {
   const navigate = useNavigate();
   const activeDataset: Dataset = location.pathname === "/market/ccc"
     ? "ccc"
+    : location.pathname === "/partslink-interchange" ? "pairs"
+    : location.pathname === "/partslinks" ? "partslinks"
+    : location.pathname === "/interchanges" ? "interchanges"
     : location.pathname === "/vins" ? "vins" : location.pathname === "/oem" ? "oem" : "vehicles";
   const activityActive = location.pathname === "/activity";
 
@@ -48,7 +55,10 @@ function App() {
           <button className={activeDataset === "vehicles" ? "active" : ""} onClick={() => navigate("/vehicles")}><span>01</span>Vehicle</button>
           <button className={activeDataset === "vins" ? "active" : ""} onClick={() => navigate("/vins")}><span>02</span>VIN</button>
           <button className={activeDataset === "oem" ? "active" : ""} onClick={() => navigate("/oem")}><span>03</span>OEM</button>
-          <button className={activityActive ? "active" : ""} onClick={() => navigate("/activity")}><span>04</span>Activity</button>
+          <button className={activeDataset === "partslinks" ? "active" : ""} onClick={() => navigate("/partslinks")}><span>04</span>Partslink</button>
+          <button className={activeDataset === "interchanges" ? "active" : ""} onClick={() => navigate("/interchanges")}><span>05</span>Interchange</button>
+          <button className={activeDataset === "pairs" ? "active" : ""} onClick={() => navigate("/partslink-interchange")}><span>06</span>Cross-reference</button>
+          <button className={activityActive ? "active" : ""} onClick={() => navigate("/activity")}><span>07</span>Activity</button>
         </nav>
         <div className="menu-parent market-menu-parent"><span className="menu-parent-icon">▤</span>MARKET</div>
         <nav className="subnav" aria-label="Market">
@@ -57,12 +67,15 @@ function App() {
         <div className="sidebar-bottom"><a href="/">← Portal home</a><span>IPART · DATA SERVICES</span></div>
       </aside>
       <main className="main-area">
-        <header className="topbar"><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
+        <header className="topbar"><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : activeDataset === "partslinks" ? "Partslink" : activeDataset === "interchanges" ? "Interchange" : activeDataset === "pairs" ? "Cross-reference" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
         <Routes>
           <Route path="/" element={<Navigate to="/vehicles" replace />} />
           <Route path="/vehicles" element={<MasterDataPage dataset="vehicles" />} />
           <Route path="/vins" element={<MasterDataPage dataset="vins" />} />
           <Route path="/oem" element={<OemPage />} />
+          <Route path="/partslinks" element={<CatalogPage kind="partslinks" />} />
+          <Route path="/interchanges" element={<CatalogPage kind="interchanges" />} />
+          <Route path="/partslink-interchange" element={<CatalogPairsPage />} />
           <Route path="/market/ccc" element={<CccMarketPage />} />
           <Route path="/activity" element={<ActivityPage isAdmin={user.role === "superadmin"} />} />
           <Route path="*" element={<Navigate to="/vehicles" replace />} />
@@ -77,13 +90,8 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
   const [vins, setVins] = useState<Page<Vin>>({ items: [], page: 1, page_size: 10, total: 0, pages: 0 });
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [year, setYear] = useState("");
-  const [make, setMake] = useState("");
-  const [model, setModel] = useState("");
-  const [vehicleFilter, setVehicleFilter] = useState("");
-  const [vehicleFilterId, setVehicleFilterId] = useState<number | undefined>();
-  const [vehicleOptions, setVehicleOptions] = useState<VehicleOption[]>([]);
-  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ years: [], makes: [], models: [] });
+  const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilterValue>>({});
+  const [sort, setSort] = useState<{ field: string; direction: "asc" | "desc" }>({ field: "", direction: "asc" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -100,7 +108,7 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
     setLoading(true);
     setError("");
     try {
-      const params = { page, page_size: 10, search, year: year ? Number(year) : undefined, make, model, vehicle_id: vehicleFilterId };
+      const params = { page, page_size: 10, search, filters: JSON.stringify(columnFilters), sort_by: sort.field, sort_dir: sort.direction };
       if (dataset === "vehicles") setVehicles(await getPage<Vehicle>("/api/universe/vehicles", params));
       else setVins(await getPage<Vin>("/api/universe/vins", params));
     } catch (reason) {
@@ -113,29 +121,20 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 180);
     return () => window.clearTimeout(timer);
-  }, [dataset, page, search, year, make, model, vehicleFilterId]);
-
-  useEffect(() => {
-    if (dataset !== "vins") return;
-    getFilterOptions().then(setFilterOptions).catch((reason) => setError(errorText(reason)));
-  }, [dataset]);
-
-  useEffect(() => {
-    if (dataset !== "vins") return;
-    const timer = window.setTimeout(() => {
-      getVehicleOptions(vehicleFilter, 50).then(setVehicleOptions).catch((reason) => setError(errorText(reason)));
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [dataset, vehicleFilter]);
-
-  useEffect(() => {
-    if (dataset !== "vins" || !vehicleFilter) return;
-    const match = vehicleOptions.find((option) => option.label === vehicleFilter);
-    if (match) setVehicleFilterId(match.id);
-  }, [dataset, vehicleFilter, vehicleOptions]);
+  }, [dataset, page, search, columnFilters, sort]);
 
   const current = dataset === "vehicles" ? vehicles : vins;
-  const clearFilters = () => { setSearch(""); setYear(""); setMake(""); setModel(""); setVehicleFilter(""); setVehicleFilterId(undefined); setPage(1); };
+  const clearFilters = () => { setSearch(""); setColumnFilters({}); setPage(1); };
+
+  const updateColumnFilter = (field: string, value: ColumnFilterValue) => {
+    setColumnFilters((current) => ({ ...current, [field]: value }));
+    setPage(1);
+  };
+
+  const updateSort = (field: string) => {
+    setSort((current) => ({ field, direction: current.field === field && current.direction === "asc" ? "desc" : "asc" }));
+    setPage(1);
+  };
 
   const remove = async (id: number) => {
     const label = dataset === "vehicles" ? "vehicle and all linked VINs" : "VIN";
@@ -154,6 +153,7 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
   };
 
   const exportData = async () => {
+    const exportParams = { search, filters: JSON.stringify(columnFilters), sort_by: sort.field, sort_dir: sort.direction };
     if (dataset === "vins") {
       setExportFile(null);
       setExportMode("all");
@@ -161,7 +161,7 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
       return;
     }
     try {
-      await downloadExcel(dataset, { search, year: year || undefined, make, model });
+      await downloadExcel(dataset, exportParams);
     } catch (reason) {
       setError(errorText(reason));
     }
@@ -172,7 +172,7 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
     setError("");
     try {
       if (exportMode === "all") {
-        await downloadExcel("vins", {});
+        await downloadExcel("vins", { search, filters: JSON.stringify(columnFilters), sort_by: sort.field, sort_dir: sort.direction });
       } else if (exportFile) {
         await downloadVinExportByVehicleList(exportFile);
       } else {
@@ -246,14 +246,8 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
   return (
     <section className="content-wrap">
       <div className="page-heading"><div><p className="eyebrow">MASTER DATA / {dataset.toUpperCase()}</p><h1>{title}</h1><p>{subtitle}</p></div><div className="heading-count"><strong>{current.total.toLocaleString()}</strong><span>records</span></div></div>
-      <div className={`toolbar-row${dataset === "vins" ? " vin-filter-toolbar" : ""}`}>
+      <div className="toolbar-row">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={dataset === "vehicles" ? "Search year, make, model" : "Search VIN or vehicle"} /></label>
-        {dataset === "vehicles" ? <input className="filter-input year-filter" inputMode="numeric" placeholder="Year" value={year} onChange={(event) => { setYear(event.target.value.replace(/\D/g, "").slice(0, 4)); setPage(1); }} /> : <SearchSelect label="Year" className="vin-search-filter vin-year-search-filter" value={year} options={filterOptions.years.map((item) => ({ label: String(item), value: String(item) }))} placeholder="Year" allowCustom onChange={(value) => { setYear(value.replace(/\D/g, "").slice(0, 4)); setPage(1); }} />}
-        {dataset === "vehicles" ? <input className="filter-input" placeholder="Make" value={make} onChange={(event) => { setMake(event.target.value); setPage(1); }} /> : <SearchSelect label="Make" className="vin-search-filter" value={make} options={filterOptions.makes.map((item) => ({ label: item, value: item }))} placeholder="Make" allowCustom onChange={(value) => { setMake(value); setPage(1); }} />}
-        {dataset === "vins" && <>
-          <SearchSelect label="Model" className="vin-search-filter" value={model} options={filterOptions.models.map((item) => ({ label: item, value: item }))} placeholder="Model" allowCustom onChange={(value) => { setModel(value); setPage(1); }} />
-          <SearchSelect label="Vehicle" className="vin-search-filter vin-vehicle-search-filter" value={vehicleFilter} options={vehicleOptions.map((option) => ({ label: option.label, value: option.label }))} placeholder="Vehicle" onSearch={(value) => { setVehicleFilter(value); const match = vehicleOptions.find((option) => option.label === value); setVehicleFilterId(match?.id); }} onChange={(value) => { setVehicleFilter(value); const match = vehicleOptions.find((option) => option.label === value); setVehicleFilterId(match?.id); setPage(1); }} />
-        </>}
         <button className="text-button" onClick={clearFilters}>Clear</button>
         <div className="toolbar-spacer" />
         <label className={`outline-button file-button${importing ? " disabled" : ""}`}>
@@ -268,7 +262,7 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
       {importSummary && <div className="import-summary"><div><strong>Import complete</strong><span>{importSummary.created} created</span><span>{importSummary.updated} updated</span><span>{importSummary.skipped} unchanged/skipped</span>{dataset === "vins" && <span>{importSummary.vehicles_created} vehicles added</span>}</div>{importSummary.errors.length > 0 && <details><summary>{importSummary.errors.length} row issue(s)</summary><ul>{importSummary.errors.map((item) => <li key={item}>{item}</li>)}</ul></details>}<button onClick={() => setImportSummary(null)} aria-label="Dismiss import report">×</button></div>}
       <div className="table-frame">
         <table>
-          <thead><tr>{dataset === "vehicles" ? <><th>YEAR</th><th>MAKE</th><th>MODEL</th><th>VINS</th><th>UPDATED</th></> : <><th>YEAR</th><th>MAKE</th><th>MODEL</th><th>VIN</th><th>UPDATED</th></>}<th aria-label="Actions" /></tr></thead>
+          <thead><tr>{(dataset === "vehicles" ? [["year", "YEAR"], ["make", "MAKE"], ["model", "MODEL"], ["vin_count", "VINS"], ["updated_at", "UPDATED"]] : [["year", "YEAR"], ["make", "MAKE"], ["model", "MODEL"], ["vin", "VIN"], ["updated_at", "UPDATED"]]).map(([field, label]) => <ColumnHeader key={field} field={field} label={label} filter={columnFilters[field] ?? { value: "", mode: "any" }} sort={sort} onFilter={updateColumnFilter} onSort={updateSort} />)}<th aria-label="Actions" /></tr></thead>
           <tbody>
             {loading ? <tr><td className="empty-state" colSpan={6}>Loading records…</td></tr> : current.items.length === 0 ? <tr><td className="empty-state" colSpan={6}>No records match these filters.</td></tr> : dataset === "vehicles" ? (vehicles.items as Vehicle[]).map((vehicle) => <tr key={vehicle.id}>
               <td className="year-cell">{vehicle.year}</td><td>{vehicle.make}</td><td>{vehicle.model}</td><td><span className="count-pill">{vehicle.vin_count}</span></td><td className="updated-cell">{new Date(vehicle.updated_at).toLocaleDateString()}</td><td className="row-actions"><button onClick={() => { setModal(vehicle); setNotice(""); }}>Edit</button><button className="delete-action" disabled={busyId === vehicle.id} onClick={() => void remove(vehicle.id)}>Delete</button></td>
@@ -282,7 +276,7 @@ function MasterDataPage({ dataset }: { dataset: MasterDataset }) {
       {modal !== null && <Modal title={`${modal === "new" ? "Add" : "Edit"} ${dataset === "vehicles" ? "vehicle" : "VIN"}`} onClose={() => setModal(null)}>
         {dataset === "vehicles" ? <VehicleForm value={modal === "new" ? null : modal as Vehicle} onSubmit={editVehicle} onCancel={() => setModal(null)} /> : <VinForm value={modal === "new" ? null : modal as Vin} onSubmit={editVin} onCancel={() => setModal(null)} />}
       </Modal>}
-      {showExportDialog && <Modal title="Export VINs" onClose={() => setShowExportDialog(false)}><div className="export-options"><label className={`export-choice${exportMode === "all" ? " selected" : ""}`}><input type="radio" name="vin-export-mode" checked={exportMode === "all"} onChange={() => setExportMode("all")} /><span><strong>All VIN records</strong><small>Export every VIN and its related vehicle.</small></span></label><label className={`export-choice${exportMode === "list" ? " selected" : ""}`}><input type="radio" name="vin-export-mode" checked={exportMode === "list"} onChange={() => setExportMode("list")} /><span><strong>Vehicle list from Excel</strong><small>Export VINs for Year/Make/Model rows in a workbook.</small></span></label>{exportMode === "list" && <label className="vehicle-list-upload">Excel file<input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} /><small>Required columns: Year, Make, Model{exportFile ? ` · ${exportFile.name}` : ""}</small></label>}</div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowExportDialog(false)}>Cancel</button><button type="button" className="primary-button" disabled={exportBusy || (exportMode === "list" && !exportFile)} onClick={() => void submitVinExport()}>{exportBusy ? "Preparing…" : "Export VINs"}</button></div></Modal>}
+      {showExportDialog && <Modal title="Export VINs" onClose={() => setShowExportDialog(false)}><div className="export-options"><label className={`export-choice${exportMode === "all" ? " selected" : ""}`}><input type="radio" name="vin-export-mode" checked={exportMode === "all"} onChange={() => setExportMode("all")} /><span><strong>Filtered VIN results</strong><small>Export all VINs matching the current search and column filters, in the selected sort order.</small></span></label><label className={`export-choice${exportMode === "list" ? " selected" : ""}`}><input type="radio" name="vin-export-mode" checked={exportMode === "list"} onChange={() => setExportMode("list")} /><span><strong>Vehicle list from Excel</strong><small>Export VINs for Year/Make/Model rows in a workbook.</small></span></label>{exportMode === "list" && <label className="vehicle-list-upload">Excel file<input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} /><small>Required columns: Year, Make, Model{exportFile ? ` · ${exportFile.name}` : ""}</small></label>}</div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowExportDialog(false)}>Cancel</button><button type="button" className="primary-button" disabled={exportBusy || (exportMode === "list" && !exportFile)} onClick={() => void submitVinExport()}>{exportBusy ? "Preparing…" : "Export VINs"}</button></div></Modal>}
     </section>
   );
 }

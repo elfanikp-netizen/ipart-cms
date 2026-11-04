@@ -9,8 +9,8 @@ export default function OemForm({ value, onSaved, onCancel }: {
   onSaved: (item: Oem) => void;
   onCancel: () => void;
 }) {
-  const [vinSearch, setVinSearch] = useState(value ? `${value.vin} · ${value.year} ${value.make} ${value.model}` : "");
-  const [selectedVin, setSelectedVin] = useState(value ? String(value.id_vin) : "");
+  const [vinSearch, setVinSearch] = useState("");
+  const [selectedVin, setSelectedVin] = useState("");
   const [vins, setVins] = useState<Vin[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -38,13 +38,9 @@ export default function OemForm({ value, onSaved, onCancel }: {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedVin) {
-      setError("Select a VIN from the search results.");
-      return;
-    }
     const form = new FormData(event.currentTarget);
     const values: OemValues = {
-      id_vin: Number(selectedVin),
+      id_vin: selectedVin ? Number(selectedVin) : null,
       oem: String(form.get("oem") || ""),
       description: String(form.get("description") || ""),
       notes: String(form.get("notes") || ""),
@@ -79,7 +75,7 @@ export default function OemForm({ value, onSaved, onCancel }: {
           }}
         />
         <input type="hidden" name="id_vin" value={selectedVin} />
-        {!selectedVin && <small className="field-error">Select an existing VIN.</small>}
+        <small>{selectedVin ? "This VIN will be linked to the OEM." : "VIN is optional. Add fitments through OEM import."}</small>
       </div>
       <label className="full-field">OEM<input name="oem" maxLength={150} defaultValue={value?.oem ?? ""} required /></label>
       <label className="full-field">Description<input name="description" maxLength={4000} defaultValue={value?.description ?? ""} /></label>

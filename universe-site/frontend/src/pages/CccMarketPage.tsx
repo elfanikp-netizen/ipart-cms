@@ -300,12 +300,16 @@ export default function CccMarketPage() {
 
   const start = total ? (page - 1) * PAGE_SIZE + 1 : 0;
   const end = Math.min(page * PAGE_SIZE, total);
+  const descriptionRows = [...(dashboardData?.descriptions ?? [])].sort((left, right) => {
+    return right.oem_opportunities - left.oem_opportunities || left.description.localeCompare(right.description);
+  });
+  const priceTrend = (dashboardData?.trend_oem ?? []).map((item) => ({ ...item, offers: item.oems }));
 
   return (
     <section className="content-wrap">
       <div className="page-heading">
-        <div><p className="eyebrow">MARKET / CCC</p><h1>{activeView === "dashboard" ? "Dashboard" : activeView === "crawls" ? "CCC Market" : activeView === "lowest" ? "Lowest Price" : "Price History"}</h1><p>{activeView === "dashboard" ? "Vendor competitiveness across CCC crawls." : activeView === "crawls" ? "Crawls grouped by OEM, VIN, and crawl date; newest first." : activeView === "lowest" ? "Compare lowest and lost prices for each vendor and description." : "Track vendor prices for an OEM across CCC crawls."}</p></div>
-        <div className="heading-count"><strong>{activeView === "dashboard" ? (dashboardData?.priced_offers ?? 0).toLocaleString() : activeView === "crawls" ? total.toLocaleString() : activeView === "lowest" ? (lowestSummary?.oem_count ?? 0).toLocaleString() : (priceHistory?.vendors.length ?? 0).toLocaleString()}</strong><span>{activeView === "dashboard" ? "priced offers" : activeView === "crawls" ? "crawls" : activeView === "lowest" ? "OEMs analyzed" : "vendors tracked"}</span></div>
+        <div><p className="eyebrow">MARKET / CCC</p><h1>{activeView === "dashboard" ? "Dashboard" : activeView === "crawls" ? "CCC Market" : activeView === "lowest" ? "Lowest Price" : "Price History"}</h1><p>{activeView === "dashboard" ? "Wins and price competitiveness are based on distinct OEMs." : activeView === "crawls" ? "Crawls grouped by OEM, VIN, and crawl date; newest first." : activeView === "lowest" ? "Compare lowest and lost prices for each vendor and description." : "Track vendor prices for an OEM across CCC crawls."}</p></div>
+        <div className="heading-count"><strong>{activeView === "dashboard" ? (dashboardData?.oem_count ?? 0).toLocaleString() : activeView === "crawls" ? total.toLocaleString() : activeView === "lowest" ? (lowestSummary?.oem_count ?? 0).toLocaleString() : (priceHistory?.vendors.length ?? 0).toLocaleString()}</strong><span>{activeView === "dashboard" ? "distinct OEMs" : activeView === "crawls" ? "crawls" : activeView === "lowest" ? "OEMs analyzed" : "vendors tracked"}</span></div>
       </div>
       <div className="ccc-view-tabs" role="tablist" aria-label="CCC views">
         <button role="tab" aria-selected={activeView === "dashboard"} className={activeView === "dashboard" ? "active" : ""} onClick={() => setActiveView("dashboard")}>Dashboard</button>
@@ -350,47 +354,52 @@ export default function CccMarketPage() {
             : !dashboardData?.priced_offers ? <p className="empty-state price-history-empty">No priced offers found for this vendor and date range.</p>
               : <div className="vendor-dashboard-content">
                 <div className="vendor-dashboard-overview">
-                  <div><p className="eyebrow">PERFORMANCE OVERVIEW</p><h2>{dashboardData.vendor}</h2><p>{dashboardDescription || "All descriptions"} · {dashboardData.crawl_count.toLocaleString()} crawls</p></div>
-                  <div className="vendor-performance-bar" aria-label={`${dashboardData.wins} wins and ${dashboardData.losses} losses`}>
+                  <div><p className="eyebrow">OEM PERFORMANCE</p><h2>{dashboardData.vendor}</h2><p>{dashboardDescription || "All descriptions"} · {dashboardData.oem_count.toLocaleString()} distinct OEMs across {dashboardData.crawl_count.toLocaleString()} crawls</p></div>
+                  <div className="vendor-performance-bar" aria-label={`${dashboardData.wins} OEM wins and ${dashboardData.losses} OEM losses`}>
                     <span className="vendor-performance-win" style={{ width: `${dashboardData.win_rate}%` }} />
                     <span className="vendor-performance-loss" style={{ width: `${100 - dashboardData.win_rate}%` }} />
                   </div>
-                  <div className="vendor-performance-caption"><span><i className="vendor-win-dot" />Wins {dashboardData.wins.toLocaleString()}</span><span><i className="vendor-loss-dot" />Losses {dashboardData.losses.toLocaleString()}</span></div>
+                  <div className="vendor-performance-caption"><span><i className="vendor-win-dot" />OEM wins {dashboardData.wins.toLocaleString()}</span><span><i className="vendor-loss-dot" />OEM losses {dashboardData.losses.toLocaleString()}</span></div>
                 </div>
                 <section className="vendor-dashboard-section">
-                  <header><div><h2>Price competitiveness</h2><p>Average vendor price versus average lowest market price by crawl date.</p></div><div className="vendor-dashboard-legend"><span><i className="vendor-price-key" />{dashboardData.vendor}</span><span><i className="market-price-key" />Market low</span></div></header>
-                  {dashboardData.trend.length < 2 ? <p className="vendor-dashboard-empty">At least two crawl dates are needed to draw a trend. Current average: {formatPrice(dashboardData.trend[0]?.average_price ?? "0")}</p>
+                  <header>
+                    <div><h2>Price competitiveness</h2><p>Each OEM contributes once per crawl date; multiple records for an OEM are averaged first.</p></div>
+                    <div className="vendor-dashboard-legend"><span><i className="vendor-price-key" />{dashboardData.vendor}</span><span><i className="market-price-key" />Market low</span></div>
+                  </header>
+                  {priceTrend.length < 2 ? <p className="vendor-dashboard-empty">At least two crawl dates are needed to draw a trend. Current average: {formatPrice(priceTrend[0]?.average_price ?? "0")}</p>
                     : <div className="vendor-trend-chart">
                       <div className="vendor-chart-summary">
-                        <div><span>Latest vendor avg.</span><strong>{formatPrice(dashboardData.trend[dashboardData.trend.length - 1]?.average_price ?? "0")}</strong></div>
-                        <div><span>Latest market low</span><strong>{formatPrice(dashboardData.trend[dashboardData.trend.length - 1]?.average_lowest_price ?? "0")}</strong></div>
-                        <div><span>Latest gap</span><strong>{formatPrice(String(Math.max(0, Number(dashboardData.trend[dashboardData.trend.length - 1]?.average_price ?? 0) - Number(dashboardData.trend[dashboardData.trend.length - 1]?.average_lowest_price ?? 0))))}</strong></div>
+                        <div><span>Latest vendor avg.</span><strong>{formatPrice(priceTrend[priceTrend.length - 1]?.average_price ?? "0")}</strong></div>
+                        <div><span>Latest market low</span><strong>{formatPrice(priceTrend[priceTrend.length - 1]?.average_lowest_price ?? "0")}</strong></div>
+                        <div><span>Latest gap</span><strong>{formatPrice(String(Math.max(0, Number(priceTrend[priceTrend.length - 1]?.average_price ?? 0) - Number(priceTrend[priceTrend.length - 1]?.average_lowest_price ?? 0))))}</strong></div>
                       </div>
-                      <svg viewBox="0 0 760 260" role="img" aria-label="Vendor and market-low average prices by crawl date" preserveAspectRatio="xMidYMid meet">
+                      <svg viewBox="0 0 760 260" role="img" aria-label="Vendor and market-low average prices per distinct OEM by crawl date" preserveAspectRatio="xMidYMid meet">
                         <defs>
                           <linearGradient id="vendorPriceFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#27765b" stopOpacity="0.22" /><stop offset="100%" stopColor="#27765b" stopOpacity="0" /></linearGradient>
                         </defs>
-                        {trendGridLines(dashboardData.trend).map((line) => <g key={line.y}><line x1="58" x2="738" y1={line.y} y2={line.y} className="vendor-chart-grid" /><text x="48" y={line.y + 4} textAnchor="end" className="vendor-chart-axis-label">${line.value.toFixed(0)}</text></g>)}
-                        <polygon points={`${trendAreaPoints(dashboardData.trend.map((item) => Number(item.average_price)), dashboardData.trend)} 738,214 58,214`} fill="url(#vendorPriceFill)" />
-                        <polyline points={trendSmoothPoints(dashboardData.trend.map((item) => Number(item.average_lowest_price)), dashboardData.trend)} className="vendor-chart-market" />
-                        <polyline points={trendSmoothPoints(dashboardData.trend.map((item) => Number(item.average_price)), dashboardData.trend)} className="vendor-chart-price" />
-                        {dashboardData.trend.map((item, index) => <g key={item.date} className="vendor-chart-point">
-                          <line x1={trendX(index, dashboardData.trend.length)} x2={trendX(index, dashboardData.trend.length)} y1="32" y2="214" className="vendor-chart-hover-line" />
-                          <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_lowest_price), dashboardData.trend)} r="4" className="vendor-chart-market-dot" />
-                          <circle cx={trendX(index, dashboardData.trend.length)} cy={trendY(Number(item.average_price), dashboardData.trend)} r="4" className="vendor-chart-price-dot" />
-                          <text x={trendX(index, dashboardData.trend.length)} y="238" textAnchor="middle" className="vendor-chart-date-label">{new Date(`${item.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</text>
-                          <title>{item.date} · {item.offers} offers · {dashboardData.vendor}: {formatPrice(item.average_price)} · Market low: {formatPrice(item.average_lowest_price)}</title>
+                        {trendGridLines(priceTrend).map((line) => <g key={line.y}><line x1="58" x2="738" y1={line.y} y2={line.y} className="vendor-chart-grid" /><text x="48" y={line.y + 4} textAnchor="end" className="vendor-chart-axis-label">${line.value.toFixed(0)}</text></g>)}
+                        <polygon points={`${trendAreaPoints(priceTrend.map((item) => Number(item.average_price)), priceTrend)} 738,214 58,214`} fill="url(#vendorPriceFill)" />
+                        <polyline points={trendSmoothPoints(priceTrend.map((item) => Number(item.average_lowest_price)), priceTrend)} className="vendor-chart-market" />
+                        <polyline points={trendSmoothPoints(priceTrend.map((item) => Number(item.average_price)), priceTrend)} className="vendor-chart-price" />
+                        {priceTrend.map((item, index) => <g key={item.date} className="vendor-chart-point">
+                          <line x1={trendX(index, priceTrend.length)} x2={trendX(index, priceTrend.length)} y1="32" y2="214" className="vendor-chart-hover-line" />
+                          <circle cx={trendX(index, priceTrend.length)} cy={trendY(Number(item.average_lowest_price), priceTrend)} r="4" className="vendor-chart-market-dot" />
+                          <circle cx={trendX(index, priceTrend.length)} cy={trendY(Number(item.average_price), priceTrend)} r="4" className="vendor-chart-price-dot" />
+                          <text x={trendX(index, priceTrend.length)} y="238" textAnchor="middle" className="vendor-chart-date-label">{new Date(`${item.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</text>
+                          <title>{item.date} · {item.offers} distinct OEMs · {dashboardData.vendor}: {formatPrice(item.average_price)} · Market low: {formatPrice(item.average_lowest_price)}</title>
                         </g>)}
                       </svg>
                     </div>}
                 </section>
                 <section className="vendor-dashboard-section">
-                  <header><div><h2>Description performance</h2><p>Wins and losses for this vendor in the selected date range.</p></div></header>
-                  <div className="vendor-dashboard-table-scroll"><table><thead><tr><th>DESCRIPTION</th><th>WINS</th><th>LOSSES</th><th>OPPORTUNITIES</th><th>WIN RATE</th></tr></thead><tbody>{dashboardData.descriptions.map((item) => <tr key={item.description}><td>{item.description}</td><td className="dashboard-win">{item.wins.toLocaleString()}</td><td className="dashboard-loss">{item.losses.toLocaleString()}</td><td>{item.opportunities.toLocaleString()}</td><td>{item.win_rate.toFixed(1)}%</td></tr>)}</tbody></table></div>
+                  <header className="description-performance-header">
+                    <div><h2>Description performance</h2><p>Each OEM is counted once per outcome for the selected date range.</p></div>
+                  </header>
+                  <div className="vendor-dashboard-table-scroll"><table><thead><tr><th>DESCRIPTION</th><th>OEMs WON</th><th>OEMs LOST</th><th>OEM OPPORTUNITIES</th><th>OEM WIN RATE</th></tr></thead><tbody>{descriptionRows.map((item) => <tr key={item.description}><td>{item.description}</td><td className="dashboard-win">{item.won_oem_count.toLocaleString()}</td><td className="dashboard-loss">{item.lost_oem_count.toLocaleString()}</td><td>{item.oem_opportunities.toLocaleString()}</td><td>{item.oem_win_rate.toFixed(1)}%</td></tr>)}</tbody></table></div>
                 </section>
                 <section className="vendor-dashboard-section">
-                  <header><div><h2>Recent crawl details</h2><p>Latest {dashboardData.details.length.toLocaleString()} of {dashboardData.details_total.toLocaleString()} priced offers</p></div></header>
-                  <div className="vendor-dashboard-table-scroll vendor-dashboard-details"><table><thead><tr><th>CRAWL DATE</th><th>OEM</th><th>VIN</th><th>DESCRIPTION</th><th>VENDOR PRICE</th><th>LOWEST VENDOR</th><th>LOWEST PRICE</th><th>PREVIOUS CRAWL</th><th>PREVIOUS LOWEST VENDOR</th><th>PREVIOUS LOWEST PRICE</th><th>RESULT</th></tr></thead><tbody>{dashboardData.details.map((item, index) => <tr key={`${item.oem}-${item.vin}-${item.description}-${item.crawl_date}-${index}`}><td>{new Date(item.crawl_date).toLocaleString()}</td><td>{item.oem}</td><td className="vin-cell">{item.vin}</td><td>{item.description}</td><td>{formatPrice(item.price)}</td><td>{item.lowest_vendors}</td><td>{formatPrice(item.lowest_price)}</td><td>{item.previous_crawl_date ? new Date(item.previous_crawl_date).toLocaleString() : "—"}</td><td>{item.previous_lowest_vendors || "—"}</td><td>{item.previous_lowest_price ? formatPrice(item.previous_lowest_price) : "—"}</td><td className={item.outcome === "won" ? "dashboard-win" : "dashboard-loss"}>{item.outcome === "won" ? "Won" : "Lost"}</td></tr>)}</tbody></table></div>
+                  <header><div><h2>Recent crawl details</h2><p>{dashboardData.vendor} · Latest {dashboardData.details.length.toLocaleString()} of {dashboardData.details_total.toLocaleString()} priced offers</p></div></header>
+                  <div className="vendor-dashboard-table-scroll vendor-dashboard-details"><table><thead><tr><th>CRAWL DATE</th><th>VENDOR</th><th>OEM</th><th>VIN</th><th>DESCRIPTION</th><th>VENDOR PRICE</th><th>LOWEST VENDOR</th><th>LOWEST PRICE</th><th>PREVIOUS CRAWL</th><th>PREVIOUS LOWEST VENDOR</th><th>PREVIOUS LOWEST PRICE</th><th>RESULT</th></tr></thead><tbody>{dashboardData.details.map((item, index) => <tr key={`${item.oem}-${item.vin}-${item.description}-${item.crawl_date}-${index}`}><td>{new Date(item.crawl_date).toLocaleString()}</td><td>{item.vendor}</td><td>{item.oem}</td><td className="vin-cell">{item.vin}</td><td>{item.description}</td><td>{formatPrice(item.price)}</td><td>{item.lowest_vendors}</td><td>{formatPrice(item.lowest_price)}</td><td>{item.previous_crawl_date ? new Date(item.previous_crawl_date).toLocaleString() : "—"}</td><td>{item.previous_lowest_vendors || "—"}</td><td>{item.previous_lowest_price ? formatPrice(item.previous_lowest_price) : "—"}</td><td className={item.outcome === "won" ? "dashboard-win" : "dashboard-loss"}>{item.outcome === "won" ? "Won" : "Lost"}</td></tr>)}</tbody></table></div>
                 </section>
               </div>}
       </>}
