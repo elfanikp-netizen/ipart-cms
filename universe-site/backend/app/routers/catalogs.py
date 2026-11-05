@@ -11,8 +11,17 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
-from ..models import OEM_INTERCHANGE, OEM_PARTSLINK, Interchange, Oem, Partslink
-from .master_data import apply_column_filters, apply_column_sort, get_cell, normalize_text, normalized_key
+from ..models import OEM_INTERCHANGE, OEM_PARTSLINK, Interchange, Oem, Partslink, Vin
+from .master_data import (
+    apply_column_filters,
+    apply_column_sort,
+    get_cell,
+    normalize_text,
+    normalize_vin,
+    normalized_key,
+    resolve_vehicle,
+    validate_year,
+)
 
 router = APIRouter(prefix="/api/universe", tags=["Parts catalogs"])
 PAGE_SIZE = 10
@@ -215,8 +224,14 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
     if missing:
         workbook.close()
         raise HTTPException(400, f"Missing required Excel columns: {', '.join(missing)}")
+    fitment_columns = ("year", "make", "model", "vin")
+    supplied_fitment_columns = [column in indexes for column in fitment_columns]
+    if any(supplied_fitment_columns) and not all(supplied_fitment_columns):
+        workbook.close()
+        raise HTTPException(400, "Provide all four fitment columns: Year, Make, Model, and VIN")
 
     result = {"catalogs_created": 0, "oems_created": 0, "links_created": 0,
+              "vehicles_created": 0, "vins_created": 0, "fitments_created": 0,
               "updated": 0, "skipped": 0, "errors": []}
     def value_at(row, field: str, slot: int | None = None):
         column = field if slot is None else f"{field} {slot}"
@@ -269,6 +284,11 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
         else:
             result["skipped"] += 1
 
+    def ensure_vin_fitment(oem_item: Oem, vin_item: Vin):
+        if vin_item not in oem_item.vins:
+            oem_item.vins.append(vin_item)
+            result["fitments_created"] += 1
+
     try:
         for row_number, row in enumerate(rows, start=2):
             try:
@@ -276,6 +296,32 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
                     partsl_value = normalize_text(value_at(row, "partslink"), "Partslink")
                     description = " ".join(str(get_cell(row, indexes.get("description", -1)) if "description" in indexes else "").strip().split())
                     partslink = resolve_catalog(SPECS["partslinks"], partsl_value, description)
+                    vin_item = None
+                    if all(supplied_fitment_columns):
+                        year = validate_year(get_cell(row, indexes["year"]))
+                        make = normalize_text(get_cell(row, indexes["make"]), "Make")
+                        vehicle_model = normalize_text(get_cell(row, indexes["model"]), "Model")
+                        vin_number = normalize_vin(get_cell(row, indexes["vin"]))
+                        vehicle, vehicle_created, vehicle_updated = resolve_vehicle(
+                            db, year, make, vehicle_model, user.id
+                        )
+                        result["vehicles_created"] += int(vehicle_created)
+                        result["updated"] += int(vehicle_updated)
+                        vin_item = db.scalar(select(Vin).where(
+                            Vin.id_vehicle == vehicle.id,
+                            Vin.vin_key == vin_number,
+                        ))
+                        if vin_item is None:
+                            vin_item = Vin(
+                                id_vehicle=vehicle.id,
+                                vin=vin_number,
+                                vin_key=vin_number,
+                                created_by=user.id,
+                                updated_by=user.id,
+                            )
+                            db.add(vin_item)
+                            db.flush()
+                            result["vins_created"] += 1
 
                     if kind == "partslinks":
                         for slot in range(1, 6):
@@ -287,9 +333,13 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
                                     oem = resolve_oem(oem_value, description)
                                     ensure_link(partslink, oem)
                                     ensure_link(interchange, oem)
+                                    if vin_item is not None:
+                                        ensure_vin_fitment(oem, vin_item)
                             elif oem_value is not None and str(oem_value).strip():
                                 oem = resolve_oem(oem_value, description)
                                 ensure_link(partslink, oem)
+                                if vin_item is not None:
+                                    ensure_vin_fitment(oem, vin_item)
                     else:
                         for slot in range(1, 6):
                             interchange_value = value_at(row, "interchange", slot)
@@ -301,6 +351,8 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
                                 oem = resolve_oem(oem_value, description)
                                 ensure_link(partslink, oem)
                                 ensure_link(interchange, oem)
+                                if vin_item is not None:
+                                    ensure_vin_fitment(oem, vin_item)
             except ValueError as error:
                 result["skipped"] += 1
                 if len(result["errors"]) < 50:
@@ -308,7 +360,9 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
         db.commit()
         log_activity(db, user, f"import_{kind}",
                      f"catalogs_created={result['catalogs_created']} oems_created={result['oems_created']} "
-                     f"links_created={result['links_created']} updated={result['updated']} skipped={result['skipped']}")
+                     f"links_created={result['links_created']} vehicles_created={result['vehicles_created']} "
+                     f"vins_created={result['vins_created']} fitments_created={result['fitments_created']} "
+                     f"updated={result['updated']} skipped={result['skipped']}")
     except IntegrityError as error:
         db.rollback()
         raise HTTPException(409, f"Import conflicted with existing {spec.label} or OEM data") from error

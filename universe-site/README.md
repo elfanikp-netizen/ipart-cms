@@ -73,8 +73,11 @@ column pairs only with the OEM column having the same number. Each OEM is linked
 to the row's Partslink and, when its matching Interchange slot is populated, to
 that Interchange as well. This makes the Partslink/Interchange cross-reference
 derive through the shared OEM instead of creating direct catalog-to-catalog
-links. The description is updated on related catalog and OEM records when
-supplied. Export-all includes every catalog number and its OEM mappings
+links. Optionally include all four columns `Year`, `Make`, `Model`, and `VIN`;
+the importer resolves or creates the matching vehicle and VIN, then attaches
+each imported OEM part to that VIN. If any fitment column is present, all four
+are required. The description is updated on related catalog and OEM records
+when supplied. Export-all includes every catalog number and its OEM mappings
 (including unmapped catalog entries); export-by-OEM takes an Excel workbook
 with an `OEM` column and returns matching catalog mappings. Both `.xlsx` and
 `.xlsm` workbooks are supported.

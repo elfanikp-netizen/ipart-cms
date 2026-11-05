@@ -480,6 +480,9 @@ export interface CatalogImportSummary {
   catalogs_created: number;
   oems_created: number;
   links_created: number;
+  vehicles_created: number;
+  vins_created: number;
+  fitments_created: number;
   updated: number;
   skipped: number;
   errors: string[];
