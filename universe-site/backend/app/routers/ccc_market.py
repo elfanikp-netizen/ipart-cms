@@ -99,6 +99,16 @@ def numeric_price(value: Any) -> Decimal | None:
         return None
 
 
+def matching_oem_price(market_data: dict | list) -> Decimal | None:
+    prices = [
+        price
+        for offer in market_entries(market_data)
+        if market_field(offer, "description").strip().casefold() == "oem"
+        if (price := numeric_price(offer.get("ext-price"))) is not None
+    ]
+    return min(prices) if prices else None
+
+
 def filtered_ccc_records(db: Session, oem: str, vin: str, description: str, vendor: str, search: str):
     stmt = select(CccMarketRecord)
     if oem.strip():

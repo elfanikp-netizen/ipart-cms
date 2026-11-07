@@ -182,6 +182,10 @@ All routes are under `/api/universe` and require a valid Portal session:
 | `GET /market/ccc` | Filter and page CCC market data, newest crawl first |
 | `GET /market/ccc/filters` | List distinct CCC OEM, VIN, description, and vendor filters |
 | `POST /market/ccc/import` | Import or replace CCC market data from Excel |
+| `GET /market/parts-msrp` | List MSRP snapshots with OEM fitments and current/previous CCC prices |
+| `POST /market/parts-msrp/import` | Import OEM, MSRP, and Date snapshots into `universe.parts_msrp` only |
+| `GET /market/parts-msrp/export` | Export filtered Parts MSRP snapshots as Excel |
+| `POST /market/parts-msrp/export-by-list` | Export Parts MSRP snapshots for an uploaded OEM or OEM Number list |
 | `GET /activity` | Search and paginate Universe-only activity |
 
 Universe activity is stored in PostgreSQL schema `universe` and records vehicle,

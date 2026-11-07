@@ -64,6 +64,34 @@ export interface CccMarketRecord {
   updated_at: string;
 }
 
+export interface PartsMsrpRecord {
+  id: number;
+  oem: string;
+  fitments: string[];
+  msrp: string;
+  previous_msrp: string | null;
+  ccc_price: string | null;
+  previous_ccc_price: string | null;
+  gap_msrp: string | null;
+  gap_ccc: string | null;
+  crawl_date: string;
+}
+
+export interface PartsMsrpPage {
+  items: PartsMsrpRecord[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
+export interface PartsMsrpImportSummary {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
 export interface CccMarketPage {
   items: Pick<CccMarketRecord, "oem" | "vin" | "crawl_date">[];
   page: number;
@@ -337,6 +365,45 @@ export async function importCccMarketExcel(file: File) {
   const form = new FormData();
   form.append("file", file);
   return (await client.post<CccMarketImportSummary>("/api/universe/market/ccc/import", form)).data;
+}
+
+export async function getPartsMsrpPage(params: {
+  page: number;
+  page_size: number;
+  search: string;
+  filters: string;
+  sort_by: string;
+  sort_dir: "asc" | "desc";
+}) {
+  return (await client.get<PartsMsrpPage>("/api/universe/market/parts-msrp", { params })).data;
+}
+
+export async function importPartsMsrpExcel(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return (await client.post<PartsMsrpImportSummary>("/api/universe/market/parts-msrp/import", form)).data;
+}
+
+export async function exportPartsMsrpExcel(params: {
+  search: string;
+  filters: string;
+  sort_by: string;
+  sort_dir: "asc" | "desc";
+}) {
+  const response = await client.get<Blob>("/api/universe/market/parts-msrp/export", {
+    params: { ...params, search: params.search || undefined },
+    responseType: "blob",
+  });
+  saveBlob(response.data, "parts-msrp.xlsx");
+}
+
+export async function exportPartsMsrpByOemList(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await client.post<Blob>("/api/universe/market/parts-msrp/export-by-list", form, {
+    responseType: "blob",
+  });
+  saveBlob(response.data, "parts-msrp-by-oem.xlsx");
 }
 
 export async function saveVehicle(id: number | null, values: Pick<Vehicle, "year" | "make" | "model" | "notes">) {

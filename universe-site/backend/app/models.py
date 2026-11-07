@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import (Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Table, Text, UniqueConstraint, func)
+from sqlalchemy import (Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Table, Text, UniqueConstraint, func)
 from sqlalchemy.orm import relationship
 
 from .db import Base, engine
@@ -168,6 +168,20 @@ class CccMarketRecord(Base):
     market_data = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class PartsMsrp(Base):
+    __tablename__ = "parts_msrp"
+    __table_args__ = (
+        UniqueConstraint("oem", "crawl_date", name="uq_parts_msrp_oem_crawl_date"),
+        Index("ix_parts_msrp_oem_crawl_date", "oem", "crawl_date"),
+        {"schema": APP_SCHEMA} if APP_SCHEMA else {},
+    )
+
+    id = Column(Integer, primary_key=True)
+    oem = Column(String(150), nullable=False)
+    msrp = Column(Numeric(12, 2), nullable=False)
+    crawl_date = Column(DateTime(timezone=True), nullable=False)
 
 
 class Activity(Base):

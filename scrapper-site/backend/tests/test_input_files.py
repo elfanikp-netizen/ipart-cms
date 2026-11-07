@@ -105,6 +105,12 @@ class InputFileTests(unittest.TestCase):
         self.assertEqual(vin_sites["vininspect"]["output_columns"], ["Year", "Make", "Model", "VIN", "Status"])
         self.assertEqual(vin_sites["google"]["output_columns"], ["VIN", "VIN_Source", "VIN_Candidates", "VIN_Status"])
 
+    def test_every_site_option_label_includes_its_domain(self) -> None:
+        for crawler_id, crawler in CRAWLERS.items():
+            for site in crawler.to_dict()["sites"]:
+                with self.subTest(crawler=crawler_id, site=site["key"]):
+                    self.assertRegex(site["label"], r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,32 @@ SITE_VARIANTS: dict[str, dict[str, str]] = {
         "moparpartsgiant": "scrape_chrysler2.py",
     },
 }
+BRAND_SITE_DOMAINS: dict[str, dict[str, str]] = {
+    "acura": {"acura": "acurapartswarehouse.com"},
+    "audi": {"audi": "audipartsgiant.com"},
+    "bmw": {"bmw": "getbmwparts.com"},
+    "chrysler": {
+        "mymoparparts": "mymoparparts.com",
+        "moparpartsgiant": "www.moparpartsgiant.com",
+    },
+    "ford": {"ford": "fordpartsgiant.com"},
+    "gmc": {"gmc": "parts.gmparts.com"},
+    "honda": {"honda": "honda.oempartsonline.com"},
+    "hyundai": {"hyundai": "hyundaipartsdeal.com"},
+    "infiniti": {"infiniti": "infinitipartsdeal.com"},
+    "kia": {"kia": "kiapartsnow.com"},
+    "lexus": {"lexus": "lexuspartsnow.com"},
+    "mazda": {"mazda": "mazda.oempartsonline.com"},
+    "nissan": {"nissan": "nissanpartsdeal.com"},
+    "porsche": {"porsche": "porsche.oempartsonline.com"},
+    "subaru": {"subaru": "subarupartsdeal.com"},
+    "toyota": {"toyota": "autoparts.toyota.com"},
+    "volvo": {
+        "volvopartscounter": "www.volvopartscounter.com",
+        "volvo.oempartsonline": "volvo.oempartsonline.com",
+    },
+    "vw": {"vw": "parts.vw.com"},
+}
 
 
 @dataclass(frozen=True)
@@ -191,11 +217,21 @@ def _brand_crawlers() -> list[CrawlerSpec]:
     for brand in BRANDS:
         folder = settings.brand_dir / f"scrapper-{brand}"
         variants = SITE_VARIANTS.get(brand)
+        domains = BRAND_SITE_DOMAINS[brand]
         if variants:
-            sites = tuple(SiteVariant(key=k, label=k, script=v) for k, v in variants.items())
+            sites = tuple(
+                SiteVariant(key=key, label=f"{key} ({domains[key]})", script=script)
+                for key, script in variants.items()
+            )
         else:
             # single-site crawler: one fixed entry so the UI can show it consistently
-            sites = (SiteVariant(key=brand, label=f"{brand} (default)", script=f"scrape_{brand}.py"),)
+            sites = (
+                SiteVariant(
+                    key=brand,
+                    label=f"{brand} ({domains[brand]})",
+                    script=f"scrape_{brand}.py",
+                ),
+            )
         specs.append(
             CrawlerSpec(
                 id=f"brand-{brand}",
@@ -244,7 +280,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             headed_flag="--headed",
             supports_description=True,
             description_default="A/M: CAPA",
-            sites=(SiteVariant(key="cccone", label="cccone.com", script="crawler.py"),),
+            sites=(SiteVariant(key="cccone", label="CCC One (cccone.com)", script="crawler.py"),),
             notes="CCC credentials come from its .env. Description matching is case-insensitive substring matching; default: A/M: CAPA.",
             input_spec=InputSpec(
                 required_headers=("VIN", "OEM"),
@@ -271,7 +307,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_manual_login=True,
             supports_resume=True,
             resume_requires_output=False,
-            sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_crawler.py"),),
+            sites=(SiteVariant(key="orderkeystone", label="Keystone (preview.orderkeystone.com)", script="keystone_crawler.py"),),
             notes="Headless by default; login via .env. Use --show / manual login if blocked.",
             input_spec=InputSpec(
                 header_alternatives=(("PARTSLINK", "Partslink Number", "Part Number"),),
@@ -303,7 +339,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_live_visibility=True,
             live_visibility_flag="--live-visibility",
             supports_manual_login=True,
-            sites=(SiteVariant(key="pacificbest", label="Pacific Best", script="pacificbest_crawler.py"),),
+            sites=(SiteVariant(key="pacificbest", label="Pacific Best (portal.pacificbestinc.com)", script="pacificbest_crawler.py"),),
             notes="Pacific Best Parts catalog. Manual login requires a visible browser; credentials are read from the project .env.",
             input_spec=InputSpec(
                 header_alternatives=(("PARTSLINK", "OEM"),),
@@ -328,7 +364,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_show=True,
             supports_live_visibility=True,
             supports_manual_login=True,
-            sites=(SiteVariant(key="orderkeystone", label="preview.orderkeystone.com", script="keystone_model_crawler.py"),),
+            sites=(SiteVariant(key="orderkeystone", label="Keystone (preview.orderkeystone.com)", script="keystone_model_crawler.py"),),
             input_spec=InputSpec(
                 required_headers=("Year", "Brand", "Model", "Parts", "Category"),
                 template_headers=("Year", "Brand", "Model", "Parts", "Category"),
@@ -355,7 +391,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_resume=True,
             supports_live_visibility=True,
             fresh_flag="--no-resume",
-            sites=(SiteVariant(key="carid", label="carid.com", script="carid_scraper.py"),),
+            sites=(SiteVariant(key="carid", label="CARiD (www.carid.com)", script="carid_scraper.py"),),
             notes="Visible Chrome; solve Cloudflare manually when asked.",
             input_mode_scripts={
                 "partslink": "carid_scraper.py",
@@ -396,7 +432,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             sites=(
                 SiteVariant(
                     key="vininspect",
-                    label="VinInspect",
+                    label="VinInspect (vininspect.com)",
                     script="scrapper_vin.py",
                     supports_fresh=True,
                     fresh_flag="--start-over",
@@ -410,7 +446,7 @@ def _registry() -> dict[str, CrawlerSpec]:
                 ),
                 SiteVariant(
                     key="google",
-                    label="Google Search",
+                    label="Google Search (google.com)",
                     script="vin_crawler.py",
                     input_flag=None,
                     output_flag="-o",

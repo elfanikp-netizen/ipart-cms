@@ -4,6 +4,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-r
 import { client, deleteRecord, downloadExcel, downloadVinExportByVehicleList, errorText, getPage, importExcel, saveVehicle, saveVin } from "./api";
 import type { ImportSummary, Page, Vehicle, Vin } from "./api";
 import CccMarketPage from "./pages/CccMarketPage";
+import PartsMsrpPage from "./pages/PartsMsrpPage";
 import ActivityPage from "./pages/ActivityPage";
 import OemPage from "./pages/OemPage";
 import CatalogPage from "./pages/CatalogPage";
@@ -12,7 +13,7 @@ import SearchSelect from "./components/SearchSelect";
 import ColumnHeader from "./components/ColumnHeader";
 import type { ColumnFilterValue } from "./components/ColumnHeader";
 
-type Dataset = "vehicles" | "vins" | "oem" | "partslinks" | "interchanges" | "pairs" | "ccc";
+type Dataset = "vehicles" | "vins" | "oem" | "partslinks" | "interchanges" | "pairs" | "ccc" | "parts-msrp";
 type MasterDataset = "vehicles" | "vins";
 type VehicleDraft = { year: string; make: string; model: string; notes: string };
 type VinDraft = { id_vehicle: string; vin: string; notes: string };
@@ -24,8 +25,9 @@ function App() {
   const [checking, setChecking] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeDataset: Dataset = location.pathname === "/market/ccc"
-    ? "ccc"
+  const activeDataset: Dataset = location.pathname === "/market/parts-msrp"
+    ? "parts-msrp"
+    : location.pathname === "/market/ccc" ? "ccc"
     : location.pathname === "/partslink-interchange" ? "pairs"
     : location.pathname === "/partslinks" ? "partslinks"
     : location.pathname === "/interchanges" ? "interchanges"
@@ -62,12 +64,13 @@ function App() {
         </nav>
         <div className="menu-parent market-menu-parent"><span className="menu-parent-icon">▤</span>MARKET</div>
         <nav className="subnav" aria-label="Market">
-          <button className={activeDataset === "ccc" ? "active" : ""} onClick={() => navigate("/market/ccc")}><span>01</span>CCC</button>
+          <button className={activeDataset === "parts-msrp" ? "active" : ""} onClick={() => navigate("/market/parts-msrp")}><span>01</span>PARTS - MSRP</button>
+          <button className={activeDataset === "ccc" ? "active" : ""} onClick={() => navigate("/market/ccc")}><span>02</span>CCC</button>
         </nav>
         <div className="sidebar-bottom"><a href="/">← Portal home</a><span>IPART · DATA SERVICES</span></div>
       </aside>
       <main className="main-area">
-        <header className="topbar"><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : activeDataset === "partslinks" ? "Partslink" : activeDataset === "interchanges" ? "Interchange" : activeDataset === "pairs" ? "Cross-reference" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
+        <header className="topbar"><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" || activeDataset === "parts-msrp" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : activeDataset === "partslinks" ? "Partslink" : activeDataset === "interchanges" ? "Interchange" : activeDataset === "pairs" ? "Cross-reference" : activeDataset === "parts-msrp" ? "PARTS - MSRP" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
         <Routes>
           <Route path="/" element={<Navigate to="/vehicles" replace />} />
           <Route path="/vehicles" element={<MasterDataPage dataset="vehicles" />} />
@@ -77,6 +80,7 @@ function App() {
           <Route path="/interchanges" element={<CatalogPage kind="interchanges" />} />
           <Route path="/partslink-interchange" element={<CatalogPairsPage />} />
           <Route path="/market/ccc" element={<CccMarketPage />} />
+          <Route path="/market/parts-msrp" element={<PartsMsrpPage />} />
           <Route path="/activity" element={<ActivityPage isAdmin={user.role === "superadmin"} />} />
           <Route path="*" element={<Navigate to="/vehicles" replace />} />
         </Routes>
