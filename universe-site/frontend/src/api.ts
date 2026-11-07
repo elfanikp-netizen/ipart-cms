@@ -374,6 +374,8 @@ export async function getPartsMsrpPage(params: {
   filters: string;
   sort_by: string;
   sort_dir: "asc" | "desc";
+  from_date: string;
+  to_date: string;
 }) {
   return (await client.get<PartsMsrpPage>("/api/universe/market/parts-msrp", { params })).data;
 }
@@ -389,6 +391,8 @@ export async function exportPartsMsrpExcel(params: {
   filters: string;
   sort_by: string;
   sort_dir: "asc" | "desc";
+  from_date: string;
+  to_date: string;
 }) {
   const response = await client.get<Blob>("/api/universe/market/parts-msrp/export", {
     params: { ...params, search: params.search || undefined },
@@ -397,10 +401,11 @@ export async function exportPartsMsrpExcel(params: {
   saveBlob(response.data, "parts-msrp.xlsx");
 }
 
-export async function exportPartsMsrpByOemList(file: File) {
+export async function exportPartsMsrpByOemList(file: File, fromDate: string, toDate: string) {
   const form = new FormData();
   form.append("file", file);
   const response = await client.post<Blob>("/api/universe/market/parts-msrp/export-by-list", form, {
+    params: { from_date: fromDate || undefined, to_date: toDate || undefined },
     responseType: "blob",
   });
   saveBlob(response.data, "parts-msrp-by-oem.xlsx");

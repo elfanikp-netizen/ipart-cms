@@ -18,6 +18,23 @@ const COLUMNS = [
 ] as const;
 const EMPTY_FILTER: ColumnFilterValue = { value: "", mode: "any" };
 
+function localDateString(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function previousMonthDate(): string {
+  const today = new Date();
+  const day = today.getDate();
+  today.setDate(1);
+  today.setMonth(today.getMonth() - 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  today.setDate(Math.min(day, lastDay));
+  return localDateString(today);
+}
+
 function money(value: string | null): string {
   if (value === null) return "—";
   const amount = Number(value);
@@ -31,6 +48,8 @@ export default function PartsMsrpPage() {
   const [search, setSearch] = useState("");
   const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilterValue>>({});
   const [sort, setSort] = useState<{ field: string; direction: "asc" | "desc" }>({ field: "", direction: "desc" });
+  const [fromDate, setFromDate] = useState(previousMonthDate);
+  const [toDate, setToDate] = useState(() => localDateString(new Date()));
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(0);
@@ -53,6 +72,8 @@ export default function PartsMsrpPage() {
       filters: JSON.stringify(columnFilters),
       sort_by: sort.field,
       sort_dir: sort.direction,
+      from_date: fromDate,
+      to_date: toDate,
     })
       .then((result) => {
         if (!current) return;
@@ -64,7 +85,7 @@ export default function PartsMsrpPage() {
       .catch((reason) => { if (current) setError(errorText(reason)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [page, search, columnFilters, sort]);
+  }, [page, search, columnFilters, sort, fromDate, toDate]);
 
   const updateColumnFilter = (field: string, value: ColumnFilterValue) => {
     setColumnFilters((current) => ({ ...current, [field]: value }));
@@ -96,6 +117,8 @@ export default function PartsMsrpPage() {
         filters: JSON.stringify(columnFilters),
         sort_by: sort.field,
         sort_dir: sort.direction,
+        from_date: fromDate,
+        to_date: toDate,
       });
       setItems(refreshed.items);
       setTotal(refreshed.total);
@@ -116,6 +139,8 @@ export default function PartsMsrpPage() {
         filters: JSON.stringify(columnFilters),
         sort_by: sort.field,
         sort_dir: sort.direction,
+        from_date: fromDate,
+        to_date: toDate,
       });
       setShowExportDialog(false);
     } catch (reason) {
@@ -130,7 +155,7 @@ export default function PartsMsrpPage() {
     setExporting(true);
     setError("");
     try {
-      await exportPartsMsrpByOemList(exportFile);
+      await exportPartsMsrpByOemList(exportFile, fromDate, toDate);
       setShowExportDialog(false);
     } catch (reason) {
       setError(errorText(reason));
@@ -153,6 +178,9 @@ export default function PartsMsrpPage() {
       </div>
       <div className="toolbar-row parts-msrp-toolbar">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search OEM" /></label>
+        <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => { setFromDate(event.target.value); setPage(1); }} /></label>
+        <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => { setToDate(event.target.value); setPage(1); }} /></label>
+        <button className="text-button" onClick={() => { setFromDate(previousMonthDate()); setToDate(localDateString(new Date())); setPage(1); }}>Reset to last month</button>
         <div className="toolbar-spacer" />
         <label className={`outline-button file-button${importing ? " disabled" : ""}`}>
           {importing ? "Importing…" : "↑ Import Excel"}

@@ -20,7 +20,7 @@ from app.routers.parts_msrp import (
     filter_sort_parts_msrp,
     history_previous_values,
     import_parts_msrp,
-    export_parts_msrp_by_list,
+    list_parts_msrp,
     parse_msrp,
 )
 
@@ -40,7 +40,9 @@ class PartsMsrpTests(unittest.TestCase):
         with patch("app.routers.parts_msrp.parts_msrp_items", return_value=[item]), patch(
             "app.routers.parts_msrp.log_activity"
         ):
-            response = export_parts_msrp("", "", "", "asc", MagicMock(), SimpleNamespace(id=1))
+            response = export_parts_msrp(
+                db=MagicMock(), user=SimpleNamespace(id=1)
+            )
 
         content = asyncio.run(self.read_response(response))
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
@@ -70,7 +72,9 @@ class PartsMsrpTests(unittest.TestCase):
         with patch("app.routers.parts_msrp.enrich_parts_msrp_records", return_value=[item]), patch(
             "app.routers.parts_msrp.log_activity"
         ):
-            response = export_parts_msrp_by_list(upload, database, SimpleNamespace(id=1))
+            response = export_parts_msrp_by_list(
+                file=upload, db=database, user=SimpleNamespace(id=1)
+            )
 
         content = asyncio.run(self.read_response(response))
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
@@ -78,6 +82,24 @@ class PartsMsrpTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1][0], "ABC123")
         workbook.close()
+
+    def test_list_passes_crawl_date_range_to_shared_filter(self):
+        from_date = datetime(2025, 1, 1).date()
+        to_date = datetime(2025, 1, 31).date()
+        rows = [{"id": 1, "oem": "ABC123", "crawl_date": datetime(2025, 1, 15)}]
+        with patch("app.routers.parts_msrp.parts_msrp_items", return_value=rows) as get_items:
+            response = list_parts_msrp(
+                page=1,
+                page_size=25,
+                from_date=from_date,
+                to_date=to_date,
+                db=MagicMock(),
+                _=SimpleNamespace(id=1),
+            )
+
+        self.assertEqual(get_items.call_args.args[1], "")
+        self.assertEqual(get_items.call_args.args[5:], (from_date, to_date))
+        self.assertEqual(response["items"], rows)
 
     @staticmethod
     async def read_response(response):
@@ -215,7 +237,9 @@ class PartsMsrpTests(unittest.TestCase):
                 session = MagicMock()
                 session.scalars.return_value.all.return_value = []
                 with patch("app.routers.parts_msrp.log_activity"):
-                    response = export_parts_msrp_by_list(upload, session, SimpleNamespace(id=1))
+                    response = export_parts_msrp_by_list(
+                        file=upload, db=session, user=SimpleNamespace(id=1)
+                    )
 
                 statement = session.scalars.call_args.args[0]
                 self.assertIn("abc123", str(statement.compile().params).casefold())

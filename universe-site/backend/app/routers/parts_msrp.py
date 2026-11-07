@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 import json
@@ -208,8 +208,21 @@ def filter_sort_parts_msrp(
     return filtered
 
 
-def parts_msrp_items(db: Session, search: str, filters: str, sort_by: str, sort_dir: str):
-    records = db.scalars(query_parts_msrp(db, search)).all()
+def parts_msrp_items(
+    db: Session,
+    search: str,
+    filters: str,
+    sort_by: str,
+    sort_dir: str,
+    from_date: date | None,
+    to_date: date | None,
+):
+    stmt = query_parts_msrp(db, search)
+    if from_date is not None:
+        stmt = stmt.where(PartsMsrp.crawl_date >= datetime.combine(from_date, time.min, timezone.utc))
+    if to_date is not None:
+        stmt = stmt.where(PartsMsrp.crawl_date < datetime.combine(to_date + timedelta(days=1), time.min, timezone.utc))
+    records = db.scalars(stmt).all()
     enriched = enrich_parts_msrp_records(db, records)
     return filter_sort_parts_msrp(enriched, filters, sort_by, sort_dir)
 
@@ -222,10 +235,12 @@ def list_parts_msrp(
     filters: str = "",
     sort_by: str = "",
     sort_dir: str = "asc",
+    from_date: date | None = None,
+    to_date: date | None = None,
     db: Session = Depends(get_db),
     _: PortalUser = Depends(get_current_user),
 ):
-    items = parts_msrp_items(db, search, filters, sort_by, sort_dir)
+    items = parts_msrp_items(db, search, filters, sort_by, sort_dir, from_date, to_date)
     total = len(items)
     return {
         "items": items[(page - 1) * page_size:page * page_size],
@@ -242,10 +257,12 @@ def export_parts_msrp(
     filters: str = "",
     sort_by: str = "",
     sort_dir: str = "asc",
+    from_date: date | None = None,
+    to_date: date | None = None,
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
-    items = parts_msrp_items(db, search, filters, sort_by, sort_dir)
+    items = parts_msrp_items(db, search, filters, sort_by, sort_dir, from_date, to_date)
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Parts MSRP")
     sheet.append([
@@ -273,6 +290,8 @@ def export_parts_msrp(
 @router.post("/export-by-list")
 def export_parts_msrp_by_list(
     file: UploadFile = File(...),
+    from_date: date | None = None,
+    to_date: date | None = None,
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
@@ -293,11 +312,14 @@ def export_parts_msrp_by_list(
     finally:
         workbook.close()
 
+    stmt = select(PartsMsrp).where(func.lower(PartsMsrp.oem).in_(requested)) if requested else select(PartsMsrp).where(False)
+    if from_date is not None:
+        stmt = stmt.where(PartsMsrp.crawl_date >= datetime.combine(from_date, time.min, timezone.utc))
+    if to_date is not None:
+        stmt = stmt.where(PartsMsrp.crawl_date < datetime.combine(to_date + timedelta(days=1), time.min, timezone.utc))
     records = db.scalars(
-        select(PartsMsrp)
-        .where(func.lower(PartsMsrp.oem).in_(requested))
-        .order_by(PartsMsrp.crawl_date.desc(), PartsMsrp.oem, PartsMsrp.id.desc())
-    ).all() if requested else []
+        stmt.order_by(PartsMsrp.crawl_date.desc(), PartsMsrp.oem, PartsMsrp.id.desc())
+    ).all()
     items = enrich_parts_msrp_records(db, records)
     output = Workbook(write_only=True)
     sheet = output.create_sheet("Parts MSRP")
