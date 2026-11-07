@@ -499,10 +499,13 @@ def export_vins_by_vehicle_list(
         keys: set[tuple[int, str, str]] = set()
         errors: list[str] = []
         for row_number, row in enumerate(rows, start=2):
+            vehicle_values = [get_cell(row, indexes[name]) for name in ("Year", "Make", "Model")]
+            if all(value is None or not str(value).strip() for value in vehicle_values):
+                continue
             try:
-                year = validate_year(get_cell(row, indexes["Year"]))
-                make = normalize_text(get_cell(row, indexes["Make"]), "Make")
-                model = normalize_text(get_cell(row, indexes["Model"]), "Model")
+                year = validate_year(vehicle_values[0])
+                make = normalize_text(vehicle_values[1], "Make")
+                model = normalize_text(vehicle_values[2], "Model")
                 keys.add((year, normalized_key(make), normalized_key(model)))
                 requested_rows.append((year, make, model))
             except ValueError as error:

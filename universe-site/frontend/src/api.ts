@@ -382,7 +382,22 @@ function saveBlob(blob: Blob, filename: string) {
 export async function downloadVinExportByVehicleList(file: File) {
   const form = new FormData();
   form.append("file", file);
-  const response = await client.post<Blob>("/api/universe/vins/export-by-vehicle-list", form, { responseType: "blob" });
+  let response;
+  try {
+    response = await client.post<Blob>("/api/universe/vins/export-by-vehicle-list", form, { responseType: "blob" });
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+      const body = await error.response.data.text();
+      let detail: string | undefined;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail;
+      } catch {
+        detail = undefined;
+      }
+      if (detail) throw new Error(detail);
+    }
+    throw error;
+  }
   saveBlob(response.data, "vins-by-vehicle-list.xlsx");
 }
 

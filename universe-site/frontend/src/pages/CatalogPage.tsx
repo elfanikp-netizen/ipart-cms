@@ -26,6 +26,7 @@ export default function CatalogPage({ kind }: { kind: CatalogKind }) {
   const [modal, setModal] = useState<CatalogRecord | null | "new">(null);
   const [showExport, setShowExport] = useState(false);
   const [exportFile, setExportFile] = useState<File | null>(null);
+  const [exportMode, setExportMode] = useState<"all" | "oem-list">("all");
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const load = async () => {
@@ -103,6 +104,11 @@ export default function CatalogPage({ kind }: { kind: CatalogKind }) {
     }
   };
 
+  const submitExport = () => {
+    if (exportMode === "all") void exportAll();
+    else void exportByOem();
+  };
+
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -155,7 +161,7 @@ export default function CatalogPage({ kind }: { kind: CatalogKind }) {
           {importing ? "Importing…" : "↑ Import Excel"}
           <input type="file" accept=".xlsx,.xlsm" onChange={onImport} disabled={importing} />
         </label>
-        <button className="outline-button" disabled={exporting} onClick={() => { setExportFile(null); setShowExport(true); }}>↓ Export Excel</button>
+        <button className="outline-button" disabled={exporting} onClick={() => { setExportFile(null); setExportMode("all"); setShowExport(true); }}>↓ Export Excel</button>
       </div>
       {error && <div className="alert error-alert" role="alert">{error}</div>}
       {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss message">×</button></div>}
@@ -172,7 +178,7 @@ export default function CatalogPage({ kind }: { kind: CatalogKind }) {
       </div>
       <div className="table-footer"><span>{data.total === 0 ? "0 records" : `${first}–${last} of ${data.total.toLocaleString()}`}</span><div><button disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)}>← Previous</button><span>Page {page}{data.pages ? ` of ${data.pages}` : ""}</span><button disabled={page >= data.pages || loading} onClick={() => setPage((value) => value + 1)}>Next →</button></div></div>
       {modal !== null && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="catalog-form-title"><header><div><p className="eyebrow">MASTER DATA / {label.toUpperCase()}</p><h2 id="catalog-form-title">{modal === "new" ? `Add ${label}` : `Edit ${label}`}</h2></div><button className="close-button" onClick={() => setModal(null)} aria-label="Close dialog">×</button></header><form className="record-form" onSubmit={save}><div className="form-grid"><label className="full-field">{label}<input name={valueField} maxLength={150} defaultValue={modal === "new" ? "" : modal[valueField as "partslink" | "interchange"] ?? ""} required /></label><label className="full-field">Description<input name="description" maxLength={4000} defaultValue={modal === "new" ? "" : modal.description} /></label><label className="full-field">Notes<textarea name="notes" rows={3} maxLength={4000} defaultValue={modal === "new" ? "" : modal.notes} /></label></div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setModal(null)}>Cancel</button><button className="primary-button">Save {label}</button></div></form></section></div>}
-      {showExport && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowExport(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="catalog-export-title"><header><div><p className="eyebrow">MASTER DATA</p><h2 id="catalog-export-title">Export {label}</h2></div><button className="close-button" onClick={() => setShowExport(false)} aria-label="Close dialog">×</button></header><div className="export-options"><button className="export-choice" disabled={exporting} onClick={() => void exportAll()}><span><strong>All {label} and OEM mappings</strong><small>Export every linked {label} number, OEM, and description.</small></span></button><label className="export-choice"><span><strong>Filter by OEM list</strong><small>Upload a workbook containing OEM numbers to export their linked {label} mappings.</small></span><input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} /><small>{exportFile ? exportFile.name : "Required column: OEM"}</small></label></div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowExport(false)}>Cancel</button><button type="button" className="primary-button" disabled={exporting || !exportFile} onClick={() => void exportByOem()}>{exporting ? "Preparing…" : "Export selected OEMs"}</button></div></section></div>}
+      {showExport && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowExport(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="catalog-export-title"><header><div><p className="eyebrow">MASTER DATA</p><h2 id="catalog-export-title">Export {label}</h2></div><button className="close-button" onClick={() => setShowExport(false)} aria-label="Close dialog">×</button></header><div className="export-options"><label className={`export-choice${exportMode === "all" ? " selected" : ""}`}><input type="radio" name={`${kind}-export-mode`} checked={exportMode === "all"} onChange={() => setExportMode("all")} /><span><strong>Current search results</strong><small>Export {label} records matching the current search, filters, and sort order.</small></span></label><label className={`export-choice${exportMode === "oem-list" ? " selected" : ""}`}><input type="radio" name={`${kind}-export-mode`} checked={exportMode === "oem-list"} onChange={() => setExportMode("oem-list")} /><span><strong>Filter by OEM list</strong><small>Upload a workbook to export its linked {label} mappings.</small></span></label>{exportMode === "oem-list" && <label className="vehicle-list-upload">Excel file<input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} /><small>Required column: OEM{exportFile ? ` · ${exportFile.name}` : ""}</small></label>}</div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowExport(false)}>Cancel</button><button type="button" className="primary-button" disabled={exporting || (exportMode === "oem-list" && !exportFile)} onClick={submitExport}>{exporting ? "Preparing…" : `Export ${label}`}</button></div></section></div>}
     </section>
   );
 }

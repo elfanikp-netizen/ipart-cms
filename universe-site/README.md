@@ -61,17 +61,20 @@ while OEM plus VIN narrows the match to that specific fitment.
 
 Partslink and Interchange imports use the same wide workbook layout. The
 `PARTSLINK` column is required; numbered Interchange and OEM columns are
-optional, and header matching is case-insensitive:
+optional, and header matching is case-insensitive. A plain `OEM` column is
+also supported as an additional OEM for the row:
 
-| PARTSLINK | INTERCHANGE 1 | INTERCHANGE 2 | ... | INTERCHANGE 5 | OEM 1 | OEM 2 | ... | OEM 5 | Description |
-|---|---|---|---|---|---|---|---|---|---|
-| a | int1a | int2a | ... | int5a | oem1a | oem2a | ... | oem5a | example part |
+| PARTSLINK | INTERCHANGE 1 | INTERCHANGE 2 | ... | INTERCHANGE 5 | OEM | OEM 1 | OEM 2 | ... | OEM 5 | Description |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a | int1a | int2a | ... | int5a | oem | oem1a | oem2a | ... | oem5a | example part |
 
 Imports create or update the catalog number and canonical OEM, then add their
 mapping without duplicating either record or link. Each numbered Interchange
 column pairs only with the OEM column having the same number. Each OEM is linked
 to the row's Partslink and, when its matching Interchange slot is populated, to
-that Interchange as well. This makes the Partslink/Interchange cross-reference
+that Interchange as well. A plain `OEM` value links to the row's Partslink and,
+for Interchange imports, to every populated Interchange slot. This makes the
+Partslink/Interchange cross-reference
 derive through the shared OEM instead of creating direct catalog-to-catalog
 links. Optionally include all four columns `Year`, `Make`, `Model`, and `VIN`;
 the importer resolves or creates the matching vehicle and VIN, then attaches

@@ -32,10 +32,10 @@ CLEAR_MARKERS = (
 
 # Progress markers emitted by the crawler scripts:
 #   carid / keystone / brands:  "[3/50] PN123 ..."
-#   ccc:                        "12:34:56 INFO Progress: 3/50"
+#   ccc:                        "12:34:56 INFO Progress: lookup 3/50"
 PROGRESS_PATTERNS = (
     re.compile(r"^\[(\d+)\s*/\s*(\d+)\]"),
-    re.compile(r"Progress:\s*(\d+)\s*/\s*(\d+)"),
+    re.compile(r"Progress:\s*(?:lookup\s+)?(\d+)\s*/\s*(\d+)"),
 )
 
 

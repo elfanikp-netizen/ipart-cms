@@ -9,10 +9,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.runner import Runner
+from app.runner import Runner, _parse_progress
 
 
 class RunnerCompletionTests(unittest.TestCase):
+    def test_ccc_lookup_progress_is_parsed(self) -> None:
+        self.assertEqual(
+            _parse_progress("10:35:05 INFO Progress: lookup 10/101 for 1 matching input row(s)"),
+            (10, 101),
+        )
+
     def test_carid_run_workspace_receives_reserved_cdp_port(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

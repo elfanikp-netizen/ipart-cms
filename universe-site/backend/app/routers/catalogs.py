@@ -115,7 +115,9 @@ def list_catalog(kind: str, page: int, page_size: int, search: str, filters: str
     empty_conditions = {"oems": ~model.oems.any()}
     value_conditions = {"oems": lambda value: model.oems.any(Oem.oem.ilike(f"%{value}%"))}
     stmt = apply_column_filters(stmt, filters, columns, empty_conditions, value_conditions)
-    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (value_column.asc(),))
+    stmt = apply_column_sort(
+        stmt, sort_by, sort_dir, columns, (model.updated_at.desc(), model.id.desc())
+    )
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     items = db.scalars(
         stmt.options(selectinload(spec.model.oems))
@@ -139,6 +141,7 @@ def list_catalog_pairs(page: int, page_size: int, search: str, filters: str,
         Interchange.id.label("id_interchange"),
         Interchange.interchange,
         func.count(func.distinct(Oem.id)).label("distinct_oem_count"),
+        func.max(Oem.updated_at).label("latest_updated_at"),
     ).select_from(Partslink).join(
         OEM_PARTSLINK, OEM_PARTSLINK.c.id_partslink == Partslink.id
     ).join(
@@ -153,7 +156,13 @@ def list_catalog_pairs(page: int, page_size: int, search: str, filters: str,
         grouped = grouped.where(or_(Partslink.partslink.ilike(pattern), Interchange.interchange.ilike(pattern)))
     grouped = grouped.group_by(Partslink.id, Partslink.partslink, Interchange.id, Interchange.interchange)
     pairs = grouped.subquery()
-    stmt = select(pairs)
+    stmt = select(
+        pairs.c.id_partslink,
+        pairs.c.partslink,
+        pairs.c.id_interchange,
+        pairs.c.interchange,
+        pairs.c.distinct_oem_count,
+    )
     columns = {
         "partslink": pairs.c.partslink,
         "interchange": pairs.c.interchange,
@@ -163,7 +172,13 @@ def list_catalog_pairs(page: int, page_size: int, search: str, filters: str,
         stmt, filters, columns,
         empty_conditions={name: false() for name in columns},
     )
-    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (pairs.c.partslink, pairs.c.interchange))
+    stmt = apply_column_sort(
+        stmt,
+        sort_by,
+        sort_dir,
+        columns,
+        (pairs.c.latest_updated_at.desc(), pairs.c.partslink, pairs.c.interchange),
+    )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).mappings().all()
     return {
@@ -183,6 +198,7 @@ def export_catalog_pairs(search: str, filters: str, sort_by: str, sort_dir: str,
         Interchange.id.label("id_interchange"),
         Interchange.interchange,
         func.count(func.distinct(Oem.id)).label("distinct_oem_count"),
+        func.max(Oem.updated_at).label("latest_updated_at"),
     ).select_from(Partslink).join(
         OEM_PARTSLINK, OEM_PARTSLINK.c.id_partslink == Partslink.id
     ).join(
@@ -203,8 +219,13 @@ def export_catalog_pairs(search: str, filters: str, sort_by: str, sort_dir: str,
     }
     stmt = apply_column_filters(select(pairs), filters, columns,
                                 empty_conditions={name: false() for name in columns})
-    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns,
-                             (pairs.c.partslink, pairs.c.interchange))
+    stmt = apply_column_sort(
+        stmt,
+        sort_by,
+        sort_dir,
+        columns,
+        (pairs.c.latest_updated_at.desc(), pairs.c.partslink, pairs.c.interchange),
+    )
     rows = db.execute(stmt).mappings().all()
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Partslink Interchange")
@@ -323,6 +344,21 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
                             db.flush()
                             result["vins_created"] += 1
 
+                    single_oem_value = value_at(row, "oem")
+                    if single_oem_value is not None and str(single_oem_value).strip():
+                        oem = resolve_oem(single_oem_value, description)
+                        ensure_link(partslink, oem)
+                        if kind == "interchanges":
+                            for slot in range(1, 6):
+                                interchange_value = value_at(row, "interchange", slot)
+                                if interchange_value is not None and str(interchange_value).strip():
+                                    interchange = resolve_catalog(
+                                        SPECS["interchanges"], interchange_value, description
+                                    )
+                                    ensure_link(interchange, oem)
+                        if vin_item is not None:
+                            ensure_vin_fitment(oem, vin_item)
+
                     if kind == "partslinks":
                         for slot in range(1, 6):
                             interchange_value = value_at(row, "interchange", slot)
@@ -389,7 +425,9 @@ def export_catalog(kind: str, search: str, filters: str, sort_by: str, sort_dir:
     stmt = apply_column_filters(stmt, filters, columns,
                                 {"oems": ~model.oems.any()},
                                 {"oems": lambda value: model.oems.any(Oem.oem.ilike(f"%{value}%"))})
-    stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (value_column.asc(),))
+    stmt = apply_column_sort(
+        stmt, sort_by, sort_dir, columns, (model.updated_at.desc(), model.id.desc())
+    )
     items = db.scalars(
         stmt.options(selectinload(model.oems))
     ).all()
