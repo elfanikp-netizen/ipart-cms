@@ -7,7 +7,14 @@ from sqlalchemy import select, text
 from .auth import PortalUser
 from .db import SessionLocal
 from .models import Vehicle, Vin
-from .routers.master_data import normalize_text, normalize_vin, normalized_key, resolve_vehicle, validate_year
+from .routers.master_data import (
+    normalize_excel_header,
+    normalize_text,
+    normalize_vin,
+    normalized_key,
+    resolve_vehicle,
+    validate_year,
+)
 
 EXAMPLE_WORKBOOK = Path(__file__).resolve().parents[2] / "data" / "Example Data.xlsx"
 
@@ -21,7 +28,7 @@ def import_example_data(path: Path = EXAMPLE_WORKBOOK) -> tuple[int, int, int]:
     try:
         sheet = workbook.active
         rows = sheet.iter_rows(values_only=True)
-        headers = [str(value or "").strip().casefold() for value in next(rows, ())]
+        headers = [normalize_excel_header(value) for value in next(rows, ())]
         required = ("year", "make", "model", "vin")
         missing = [column for column in required if column not in headers]
         if missing:

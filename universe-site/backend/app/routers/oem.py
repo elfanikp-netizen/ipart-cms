@@ -17,6 +17,7 @@ from .master_data import (
     apply_column_sort,
     get_cell,
     normalize_text,
+    normalize_excel_header,
     normalize_vin,
     normalized_key,
     resolve_vehicle,
@@ -199,7 +200,7 @@ def workbook_rows(file: UploadFile):
     except Exception as error:
         raise HTTPException(400, "Could not read the uploaded workbook") from error
     rows = workbook.active.iter_rows(values_only=True)
-    headers = [str(value or "").strip().casefold() for value in next(rows, ())]
+    headers = [normalize_excel_header(value) for value in next(rows, ())]
     return workbook, rows, {header: index for index, header in enumerate(headers) if header}
 
 

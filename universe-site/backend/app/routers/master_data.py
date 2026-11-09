@@ -111,6 +111,10 @@ def get_cell(row: Sequence, index: int) -> object:
     return row[index] if index < len(row) else None
 
 
+def normalize_excel_header(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
 def open_excel(file: UploadFile):
     suffix = (file.filename or "").lower().rsplit(".", 1)[-1]
     if suffix not in {"xlsx", "xlsm"}:
@@ -120,16 +124,16 @@ def open_excel(file: UploadFile):
     except Exception as error:
         raise HTTPException(400, "Could not read the uploaded workbook") from error
     rows = workbook.active.iter_rows(values_only=True)
-    headers = [str(value or "").strip().casefold() for value in next(rows, ())]
+    headers = [normalize_excel_header(value) for value in next(rows, ())]
     return workbook, rows, headers
 
 
 def excel_indexes(headers: list[str], required: tuple[str, ...]) -> dict[str, int]:
-    by_name = {header: index for index, header in enumerate(headers) if header}
-    missing = [name for name in required if name.casefold() not in by_name]
+    by_name = {normalize_excel_header(header): index for index, header in enumerate(headers) if header}
+    missing = [name for name in required if normalize_excel_header(name) not in by_name]
     if missing:
         raise HTTPException(400, f"Missing required Excel columns: {', '.join(missing)}")
-    return {name: by_name[name.casefold()] for name in required}
+    return {name: by_name[normalize_excel_header(name)] for name in required}
 
 
 def resolve_vehicle(db: Session, year: int, make: str, model: str, user_id: int) -> tuple[Vehicle, bool, bool]:

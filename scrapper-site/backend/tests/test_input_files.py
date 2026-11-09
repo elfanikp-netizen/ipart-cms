@@ -104,6 +104,15 @@ class InputFileTests(unittest.TestCase):
         vin_sites = {site["key"]: site for site in CRAWLERS["vin-lookup"].to_dict()["sites"]}
         self.assertEqual(vin_sites["vininspect"]["output_columns"], ["Year", "Make", "Model", "VIN", "Status"])
         self.assertEqual(vin_sites["google"]["output_columns"], ["VIN", "VIN_Source", "VIN_Candidates", "VIN_Status"])
+        self.assertEqual(vin_sites["vpic"]["label"], "VIN Decoder (vpic.nhtsa.dot.gov)")
+        self.assertEqual(vin_sites["vpic"]["input"]["required_headers"], ["VIN"])
+        self.assertEqual(vin_sites["vpic"]["output_columns"], ["Year", "Make", "Model", "VIN", "Status"])
+        vin_spec = CRAWLERS["vin-lookup"]
+        self.assertEqual(vin_spec.resolve_script("vpic").name, "vpic_decoder.py")
+        self.assertEqual(
+            vin_spec.build_args({"site": "vpic", "fresh": True}, Path("input.xlsx"), Path("output.xlsx"))[-1],
+            "--fresh",
+        )
 
     def test_every_site_option_label_includes_its_domain(self) -> None:
         for crawler_id, crawler in CRAWLERS.items():

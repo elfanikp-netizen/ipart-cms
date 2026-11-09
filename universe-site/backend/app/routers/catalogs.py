@@ -19,6 +19,7 @@ from .master_data import (
     normalize_text,
     normalize_vin,
     normalized_key,
+    normalize_excel_header,
     resolve_vehicle,
     validate_year,
 )
@@ -54,7 +55,7 @@ def open_workbook(file: UploadFile):
     except Exception as error:
         raise HTTPException(400, "Could not read the uploaded workbook") from error
     rows = workbook.active.iter_rows(values_only=True)
-    headers = [str(value or "").strip().casefold() for value in next(rows, ())]
+    headers = [normalize_excel_header(value) for value in next(rows, ())]
     return workbook, rows, {header: index for index, header in enumerate(headers) if header}
 
 
@@ -256,7 +257,7 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
               "updated": 0, "skipped": 0, "errors": []}
     def value_at(row, field: str, slot: int | None = None):
         column = field if slot is None else f"{field} {slot}"
-        index = indexes.get(column)
+        index = indexes.get(normalize_excel_header(column))
         return get_cell(row, index) if index is not None else None
 
     def resolve_catalog(catalog_spec: CatalogSpec, raw_value: object, description: str):

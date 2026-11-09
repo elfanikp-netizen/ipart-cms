@@ -19,7 +19,7 @@ from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
 from ..models import CccMarketRecord
 from ..schemas import CccMarketPageOut, CccMarketRecordOut
-from .master_data import excel_indexes, get_cell, open_excel
+from .master_data import excel_indexes, get_cell, normalize_excel_header, open_excel
 
 router = APIRouter(prefix="/api/universe/market/ccc", tags=["CCC Market data"])
 
@@ -208,9 +208,10 @@ def export_ccc_oem_list_prices(
 ):
     workbook, rows, headers = open_excel(file)
     try:
-        header_indexes = {header.casefold(): index for index, header in enumerate(headers) if header}
+        header_indexes = {normalize_excel_header(header): index for index, header in enumerate(headers) if header}
         oem_index = next(
-            (header_indexes[alias] for alias in ("oem", "oem number") if alias in header_indexes),
+            (header_indexes[normalize_excel_header(alias)] for alias in ("oem", "oem number")
+             if normalize_excel_header(alias) in header_indexes),
             None,
         )
         if oem_index is None:

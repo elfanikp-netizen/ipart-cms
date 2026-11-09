@@ -16,7 +16,7 @@ from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
 from ..models import CccMarketRecord, Oem, PartsMsrp, Vin
 from .ccc_market import matching_oem_price, parse_crawl_date
-from .master_data import excel_indexes, get_cell, open_excel, normalized_key
+from .master_data import excel_indexes, get_cell, normalize_excel_header, open_excel, normalized_key
 
 router = APIRouter(prefix="/api/universe/market/parts-msrp", tags=["Parts MSRP"])
 PAGE_SIZE = 25
@@ -297,9 +297,10 @@ def export_parts_msrp_by_list(
 ):
     workbook, rows, headers = open_excel(file)
     try:
-        header_indexes = {header.casefold(): index for index, header in enumerate(headers) if header}
+        header_indexes = {normalize_excel_header(header): index for index, header in enumerate(headers) if header}
         oem_index = next(
-            (header_indexes[alias] for alias in ("oem", "oem number") if alias in header_indexes),
+            (header_indexes[normalize_excel_header(alias)] for alias in ("oem", "oem number")
+             if normalize_excel_header(alias) in header_indexes),
             None,
         )
         if oem_index is None:
@@ -356,9 +357,10 @@ def import_parts_msrp(
     errors: list[str] = []
     try:
         indexes = excel_indexes(headers, ("msrp", "date"))
-        header_indexes = {header.casefold(): index for index, header in enumerate(headers) if header}
+        header_indexes = {normalize_excel_header(header): index for index, header in enumerate(headers) if header}
         oem_index = next(
-            (header_indexes[alias] for alias in ("oem", "oem number") if alias in header_indexes),
+            (header_indexes[normalize_excel_header(alias)] for alias in ("oem", "oem number")
+             if normalize_excel_header(alias) in header_indexes),
             None,
         )
         if oem_index is None:
