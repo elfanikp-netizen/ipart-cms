@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from sqlalchemy import String, cast, func, or_, select, text, tuple_
@@ -99,6 +99,212 @@ def numeric_price(value: Any) -> Decimal | None:
         return None
 
 
+def _offer_value(offer: dict[str, Any], field: str) -> Any:
+    wanted = field.casefold().replace("_", "-")
+    return next((value for key, value in offer.items() if key.casefold().replace("_", "-") == wanted), None)
+
+
+def _rank_oem_list_crawl(
+    records: list[CccMarketRecord],
+    vendors: set[str],
+    descriptions: set[str],
+    price_field: str,
+    direction: str,
+) -> list[dict[str, Any]]:
+    best_first = direction == "lowest"
+    grouped: dict[tuple[str, datetime], list[dict[str, Any]]] = defaultdict(list)
+    qualifying_dates: dict[str, set[datetime]] = defaultdict(set)
+    for record in records:
+        oem_key = record.oem.strip().casefold()
+        offers = market_entries(record.market_data)
+        for offer in offers:
+            vendor = market_field(offer, "vendor").strip()
+            description = market_field(offer, "description").strip()
+            if not vendor or not description or description.casefold() not in descriptions:
+                continue
+            price = numeric_price(_offer_value(offer, price_field))
+            if price is None:
+                continue
+            if vendor.casefold() in vendors:
+                qualifying_dates[oem_key].add(record.crawl_date)
+            grouped[(oem_key, record.crawl_date)].append({
+                "oem": record.oem,
+                "vin": record.vin,
+                "crawl_date": record.crawl_date,
+                "vendor": vendor,
+                "description": description,
+                "price": price,
+            })
+
+    rows = []
+    for oem, qualified_crawl_dates in qualifying_dates.items():
+        ordered_dates = sorted(qualified_crawl_dates, reverse=True)
+        current_date = ordered_dates[0]
+        previous_date = ordered_dates[1] if len(ordered_dates) > 1 else None
+
+        def vendor_prices(offers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            by_vendor: dict[tuple[str, str], dict[str, Any]] = {}
+            for offer in offers:
+                key = (offer["vendor"].casefold(), offer["description"].casefold())
+                existing = by_vendor.get(key)
+                better = existing is None or (
+                    offer["price"] < existing["price"] if best_first else offer["price"] > existing["price"]
+                )
+                if better:
+                    by_vendor[key] = offer
+            return list(by_vendor.values())
+
+        current = vendor_prices(grouped.get((oem, current_date), []))
+        if not current:
+            continue
+        current.sort(key=lambda item: (
+            item["price"] if best_first else -item["price"],
+            item["vendor"].casefold(), item["description"].casefold(), item["vin"],
+        ))
+        selected = current[0]
+        best_price = current[0]["price"]
+        tied_vendors = sorted({item["vendor"] for item in current if item["price"] == best_price})
+        runner_up_candidates = [item for item in current if item["price"] != best_price]
+        second_price = runner_up_candidates[0]["price"] if runner_up_candidates else None
+        second_vendors = sorted({
+            item["vendor"] for item in runner_up_candidates
+            if second_price is not None and item["price"] == second_price
+        })
+
+        previous_price = None
+        previous_vendors: list[str] = []
+        if previous_date is not None:
+            previous = vendor_prices(grouped.get((oem, previous_date), []))
+            if previous:
+                previous_price = (min if best_first else max)(item["price"] for item in previous)
+                previous_vendors = sorted({item["vendor"] for item in previous if item["price"] == previous_price})
+
+        rows.append({
+            **selected,
+            "outcome": f"Won/{'Lowest' if best_first else 'Highest'}",
+            "gap_price": abs(best_price - second_price) if second_price is not None else Decimal("0"),
+            "lowest_vendors": ", ".join(tied_vendors),
+            "lowest_price": best_price,
+            "second_lowest_vendors": ", ".join(second_vendors),
+            "second_lowest_price": second_price,
+            "previous_crawl_date": previous_date,
+            "gap_previous_price": abs(best_price - previous_price) if previous_price is not None else None,
+            "previous_lowest_vendors": ", ".join(previous_vendors),
+            "previous_lowest_price": previous_price,
+            "crawl_count": len(ordered_dates),
+        })
+    return sorted(rows, key=lambda row: row["oem"].casefold())
+
+
+@router.post("/export-by-oem-list")
+def export_ccc_oem_list_prices(
+    file: UploadFile = File(...),
+    vendors: list[str] = Form(default=["iPart Automotive Inc."]),
+    descriptions: list[str] = Form(default=["A/M: CAPA"]),
+    price_direction: str = Form("lowest", pattern="^(lowest|highest)$"),
+    price_field: str = Form("ext-price", pattern="^(ext-price|total)$"),
+    db: Session = Depends(get_db),
+    user: PortalUser = Depends(get_current_user),
+):
+    workbook, rows, headers = open_excel(file)
+    try:
+        header_indexes = {header.casefold(): index for index, header in enumerate(headers) if header}
+        oem_index = next(
+            (header_indexes[alias] for alias in ("oem", "oem number") if alias in header_indexes),
+            None,
+        )
+        if oem_index is None:
+            raise HTTPException(400, "Missing required Excel column: OEM or OEM Number")
+        requested_oem_labels = {}
+        for row in rows:
+            value = str(get_cell(row, oem_index) or "").strip()
+            if value:
+                requested_oem_labels.setdefault(value.casefold(), value)
+        requested_oems = set(requested_oem_labels)
+    finally:
+        workbook.close()
+
+    selected_vendors = {value.strip().casefold() for value in vendors if value.strip()}
+    selected_descriptions = {value.strip().casefold() for value in descriptions if value.strip()}
+    records = db.scalars(select(CccMarketRecord).where(
+        func.lower(func.trim(CccMarketRecord.oem)).in_(requested_oems)
+    ).order_by(CccMarketRecord.crawl_date.desc())).all() if requested_oems else []
+    result_rows = _rank_oem_list_crawl(
+        records, selected_vendors, selected_descriptions, price_field, price_direction
+    )
+    records_by_oem = {record.oem.strip().casefold() for record in records}
+    matched_by_oem = {row["oem"].strip().casefold(): row for row in result_rows}
+    for oem_key, oem_label in requested_oem_labels.items():
+        if oem_key in matched_by_oem:
+            matched_by_oem[oem_key]["export_status"] = "Matched"
+            continue
+        has_ccc_data = oem_key in records_by_oem
+        result_rows.append({
+            "oem": oem_label,
+            "vin": "",
+            "crawl_date": None,
+            "vendor": "",
+            "description": "",
+            "outcome": "",
+            "price": None,
+            "gap_price": None,
+            "lowest_vendors": "",
+            "lowest_price": None,
+            "second_lowest_vendors": "",
+            "second_lowest_price": None,
+            "previous_crawl_date": None,
+            "gap_previous_price": None,
+            "previous_lowest_vendors": "",
+            "previous_lowest_price": None,
+            "crawl_count": 0,
+            "export_status": "No CCC offer matches selected vendor/description/price" if has_ccc_data else "No CCC data for this OEM",
+        })
+
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("CCC List")
+    winner_label = "Lowest" if price_direction == "lowest" else "Highest"
+    sheet.append([
+        "OEM", "VIN", "Crawl Date", "Vendor", "Description", "Outcome", "Price", "Gap Price",
+        f"{winner_label} Vendor(s)", f"{winner_label} Price",
+        f"Second {winner_label} Vendor(s)", f"Second {winner_label} Price",
+        "Previous Crawl Date", "Gap Previous Price", f"Previous {winner_label} Vendor(s)",
+        f"Previous {winner_label} Price", "Crawls per OEM", "Export Status",
+    ])
+    for row in result_rows:
+        sheet.append([
+            row["oem"], row["vin"], row["crawl_date"].replace(tzinfo=None) if row["crawl_date"] else None, row["vendor"],
+            row["description"], row["outcome"], row["price"], row["gap_price"],
+            row["lowest_vendors"], row["lowest_price"], row["second_lowest_vendors"],
+            row["second_lowest_price"],
+            row["previous_crawl_date"].replace(tzinfo=None) if row["previous_crawl_date"] else None,
+            row["gap_previous_price"], row["previous_lowest_vendors"], row["previous_lowest_price"],
+            row["crawl_count"], row["export_status"],
+        ])
+    summary = workbook.create_sheet("Export Summary")
+    summary.append(["Requested OEMs", "CCC data found", "Matching results", "No CCC data", "No matching offer"])
+    no_ccc_data = sum(row["export_status"] == "No CCC data for this OEM" for row in result_rows)
+    no_match = sum(row["export_status"] == "No CCC offer matches selected vendor/description/price" for row in result_rows)
+    matched_count = sum(row["export_status"] == "Matched" for row in result_rows)
+    summary.append([
+        len(requested_oem_labels), len(requested_oem_labels) - no_ccc_data,
+        matched_count, no_ccc_data, no_match,
+    ])
+    summary.append([])
+    summary.append(["OEM", "Status"])
+    for row in result_rows:
+        summary.append([row["oem"], row["export_status"]])
+    log_activity(db, user, "export_ccc_oem_list_prices", f"exported {matched_count} matched and {no_ccc_data + no_match} unmatched OEM rows")
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    stream.seek(0)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=ccc-oem-won-{price_direction}.xlsx"},
+    )
+
+
 def matching_oem_price(market_data: dict | list) -> Decimal | None:
     prices = [
         price
@@ -116,9 +322,9 @@ def filtered_ccc_records(db: Session, oem: str, vin: str, description: str, vend
     if vin.strip():
         stmt = stmt.where(CccMarketRecord.vin == vin.strip())
     if description.strip():
-        stmt = stmt.where(CccMarketRecord.description.ilike(f"%{description.strip()}%"))
+        stmt = stmt.where(func.lower(func.trim(CccMarketRecord.description)) == description.strip().casefold())
     if vendor.strip():
-        stmt = stmt.where(CccMarketRecord.vendor.ilike(f"%{vendor.strip()}%"))
+        stmt = stmt.where(func.lower(func.trim(CccMarketRecord.vendor)) == vendor.strip().casefold())
     if search.strip():
         pattern = f"%{search.strip()}%"
         stmt = stmt.where(or_(

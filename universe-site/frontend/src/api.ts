@@ -292,6 +292,24 @@ export async function exportCccMarketCrawls(params: {
   saveBlob(response.data, "ccc-crawls.xlsx");
 }
 
+export async function exportCccOemListPrices(file: File, options: {
+  vendors: string[];
+  descriptions: string[];
+  price_direction: "lowest" | "highest";
+  price_field: "ext-price" | "total";
+}) {
+  const form = new FormData();
+  form.append("file", file);
+  options.vendors.forEach((vendor) => form.append("vendors", vendor));
+  options.descriptions.forEach((description) => form.append("descriptions", description));
+  form.append("price_direction", options.price_direction);
+  form.append("price_field", options.price_field);
+  const response = await client.post<Blob>("/api/universe/market/ccc/export-by-oem-list", form, {
+    responseType: "blob",
+  });
+  saveBlob(response.data, `ccc-oem-won-${options.price_direction}.xlsx`);
+}
+
 export async function getCccMarketFilters() {
   return (await client.get<CccMarketFilters>("/api/universe/market/ccc/filters")).data;
 }

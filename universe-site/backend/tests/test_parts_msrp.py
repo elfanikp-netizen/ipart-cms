@@ -9,9 +9,15 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import UploadFile
 from openpyxl import Workbook, load_workbook
+from sqlalchemy.dialects import sqlite
 
 from app.models import PartsMsrp
-from app.routers.ccc_market import matching_oem_price
+from app.routers.ccc_market import (
+    _rank_oem_list_crawl,
+    export_ccc_oem_list_prices,
+    filtered_ccc_records,
+    matching_oem_price,
+)
 from app.routers.parts_msrp import (
     ccc_price_history,
     excel_datetime,
@@ -26,6 +32,173 @@ from app.routers.parts_msrp import (
 
 
 class PartsMsrpTests(unittest.TestCase):
+    def test_selected_vendor_qualifies_oem_but_all_vendors_are_ranked(self):
+        crawl_date = datetime(2026, 10, 31, 19, 19, 29, tzinfo=timezone.utc)
+        records = [
+            SimpleNamespace(oem="04711S3VA80ZZ", vin="VIN1", crawl_date=crawl_date, market_data={
+                "vendor": "iPart Automotive Inc.", "description": "A/M: CAPA", "ext-price": "197.00", "total": "197.00",
+            }),
+            SimpleNamespace(oem="04711S3VA80ZZ", vin="VIN1", crawl_date=crawl_date, market_data={
+                "vendor": "Pacific Auto Company-Ontario", "description": "A/M: CAPA", "ext-price": "198.70", "total": "198.70",
+            }),
+        ]
+
+        lowest = _rank_oem_list_crawl(records, {"ipart automotive inc."}, {"a/m: capa"}, "ext-price", "lowest")
+        highest = _rank_oem_list_crawl(records, {"ipart automotive inc."}, {"a/m: capa"}, "ext-price", "highest")
+
+        self.assertEqual(len(lowest), 1)
+        self.assertEqual(lowest[0]["vendor"], "iPart Automotive Inc.")
+        self.assertEqual(lowest[0]["price"], Decimal("197.00"))
+        self.assertEqual(lowest[0]["second_lowest_vendors"], "Pacific Auto Company-Ontario")
+        self.assertEqual(lowest[0]["second_lowest_price"], Decimal("198.70"))
+        self.assertEqual(len(highest), 1)
+        self.assertEqual(highest[0]["vendor"], "Pacific Auto Company-Ontario")
+        self.assertEqual(highest[0]["price"], Decimal("198.70"))
+        self.assertEqual(highest[0]["second_lowest_vendors"], "iPart Automotive Inc.")
+        self.assertEqual(highest[0]["second_lowest_price"], Decimal("197.00"))
+
+    def test_ccc_description_filter_uses_exact_case_insensitive_match(self):
+        statement = filtered_ccc_records(MagicMock(), "", "", "OEM", "", "")
+        compiled = statement.compile(dialect=sqlite.dialect())
+        sql = str(compiled)
+
+        self.assertIn("lower(trim(universe.ccc_market_data.description)) = ?", sql)
+        self.assertNotIn("ccc_market_data.description LIKE", sql)
+        self.assertEqual(list(compiled.params.values()), ["oem"])
+
+    def test_ccc_vendor_filter_uses_exact_case_insensitive_match(self):
+        statement = filtered_ccc_records(MagicMock(), "", "", "", "iPart Automotive Inc.", "")
+        compiled = statement.compile(dialect=sqlite.dialect())
+        sql = str(compiled)
+
+        self.assertIn("lower(trim(universe.ccc_market_data.vendor)) = ?", sql)
+        self.assertNotIn("ccc_market_data.vendor LIKE", sql)
+        self.assertEqual(list(compiled.params.values()), ["ipart automotive inc."])
+
+    def test_ccc_oem_list_export_writes_matching_row_to_ccc_list_sheet(self):
+        source = Workbook()
+        source.active.append(["OEM Number"])
+        source.active.append(["ABC"])
+        source.active.append(["NO-DATA"])
+        input_content = BytesIO()
+        source.save(input_content)
+        source.close()
+        input_content.seek(0)
+        upload = UploadFile(filename="oems.xlsx", file=input_content)
+        crawl_date = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        record = SimpleNamespace(
+            oem="ABC", vin="VIN1", crawl_date=crawl_date,
+            market_data={"vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "50", "total": "55"},
+        )
+        database = MagicMock()
+        database.scalars.return_value.all.return_value = [record]
+        with patch("app.routers.ccc_market.log_activity"):
+            response = export_ccc_oem_list_prices(
+                file=upload,
+                vendors=["Vendor A"],
+                descriptions=["A/M: CAPA"],
+                price_direction="lowest",
+                price_field="ext-price",
+                db=database,
+                user=SimpleNamespace(id=1),
+            )
+
+        result = load_workbook(BytesIO(asyncio.run(self.read_response(response))), read_only=True)
+        self.assertEqual(result.sheetnames, ["CCC List", "Export Summary"])
+        rows = list(result.active.iter_rows(values_only=True))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1][0], "ABC")
+        self.assertEqual(rows[1][-1], "Matched")
+        self.assertEqual(rows[2][0], "NO-DATA")
+        self.assertEqual(rows[2][-1], "No CCC data for this OEM")
+        summary_rows = list(result["Export Summary"].iter_rows(values_only=True))
+        self.assertEqual(summary_rows[1], (2, 1, 1, 1, 0))
+        self.assertEqual(summary_rows[-1], ("NO-DATA", "No CCC data for this OEM"))
+        result.close()
+
+    def test_oem_list_ranking_uses_latest_crawl_and_selected_total_highest(self):
+        earlier = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        latest = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        records = [
+            SimpleNamespace(oem="ABC", vin="VIN1", crawl_date=earlier, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "50", "total": "55",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN2", crawl_date=latest, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "80", "total": "90",
+            }),
+            SimpleNamespace(oem="abc", vin="VIN3", crawl_date=latest, market_data={
+                "vendor": "Vendor B", "description": "A/M: CAPA", "ext-price": "100", "total": "110",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN4", crawl_date=latest, market_data={
+                "vendor": "Unselected", "description": "A/M: CAPA", "ext-price": "1", "total": "2",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN5", crawl_date=latest, market_data={
+                "vendor": "Vendor B", "description": "OE", "ext-price": "1", "total": "2",
+            }),
+        ]
+
+        rows = _rank_oem_list_crawl(
+            records,
+            {"vendor a", "vendor b"},
+            {"a/m: capa"},
+            "total",
+            "highest",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["crawl_date"], latest)
+        self.assertEqual(rows[0]["vendor"], "Vendor B")
+        self.assertEqual(rows[0]["price"], Decimal("110"))
+        self.assertEqual(rows[0]["previous_lowest_price"], Decimal("55"))
+        self.assertEqual(rows[0]["outcome"], "Won/Highest")
+    def test_ccc_oem_list_uses_latest_crawl_and_selected_price_direction(self):
+        earlier = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        latest = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        records = [
+            SimpleNamespace(oem="ABC", vin="VIN1", crawl_date=earlier, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "50", "total": "55",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN2", crawl_date=latest, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "80", "total": "90",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN3", crawl_date=latest, market_data={
+                "vendor": "Vendor B", "description": "A/M: CAPA", "ext-price": "100", "total": "110",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN3", crawl_date=latest, market_data={
+                "vendor": "Other", "description": "A/M: CAPA", "ext-price": "1", "total": "2",
+            }),
+        ]
+        lowest = _rank_oem_list_crawl(records, {"vendor a", "vendor b"}, {"a/m: capa"}, "ext-price", "lowest")
+        highest = _rank_oem_list_crawl(records, {"vendor a", "vendor b"}, {"a/m: capa"}, "total", "highest")
+
+        self.assertEqual(len(lowest), 1)
+        self.assertEqual(lowest[0]["crawl_date"], latest)
+        self.assertEqual(lowest[0]["vendor"], "Other")
+        self.assertEqual(lowest[0]["price"], Decimal("1"))
+        self.assertEqual(lowest[0]["second_lowest_vendors"], "Vendor A")
+        self.assertEqual(lowest[0]["second_lowest_price"], Decimal("80"))
+        self.assertEqual(lowest[0]["previous_lowest_price"], Decimal("50"))
+        self.assertEqual(highest[0]["vendor"], "Vendor B")
+        self.assertEqual(highest[0]["price"], Decimal("110"))
+        self.assertEqual(highest[0]["second_lowest_vendors"], "Vendor A")
+        self.assertEqual(highest[0]["second_lowest_price"], Decimal("90"))
+
+    def test_oem_list_export_uses_latest_crawl_with_matching_selected_offer(self):
+        older = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        latest = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        records = [
+            SimpleNamespace(oem="ABC", vin="VIN1", crawl_date=older, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "50",
+            }),
+            SimpleNamespace(oem="ABC", vin="VIN1", crawl_date=latest, market_data={
+                "vendor": "Other Vendor", "description": "A/M: CAPA", "ext-price": "40",
+            }),
+        ]
+        rows = _rank_oem_list_crawl(records, {"vendor a"}, {"a/m: capa"}, "ext-price", "lowest")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["crawl_date"], older)
+        self.assertEqual(rows[0]["vendor"], "Vendor A")
+
     def test_timezone_aware_export_date_is_excel_compatible(self):
         value = datetime(2025, 1, 2, 12, tzinfo=timezone.utc)
         self.assertEqual(excel_datetime(value), datetime(2025, 1, 2, 12))

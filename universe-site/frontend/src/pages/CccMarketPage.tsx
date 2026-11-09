@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "./lowest-price.css";
-import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, exportCccVendorDashboard, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
+import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, exportCccOemListPrices, exportCccVendorDashboard, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
 import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord, CccPriceHistory, CccVendorDashboard } from "../api";
 import SearchSelect from "../components/SearchSelect";
 
@@ -39,6 +39,15 @@ export default function CccMarketPage() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [exportingCrawls, setExportingCrawls] = useState(false);
+  const [showOemListExport, setShowOemListExport] = useState(false);
+  const [crawlExportMode, setCrawlExportMode] = useState<"all" | "oem-list">("all");
+  const [oemListFile, setOemListFile] = useState<File | null>(null);
+  const [oemListVendors, setOemListVendors] = useState<string[]>(["iPart Automotive Inc."]);
+  const [oemListDescriptions, setOemListDescriptions] = useState<string[]>(["A/M: CAPA"]);
+  const [oemListVendorSearch, setOemListVendorSearch] = useState("");
+  const [oemListDescriptionSearch, setOemListDescriptionSearch] = useState("");
+  const [oemListDirection, setOemListDirection] = useState<"lowest" | "highest">("lowest");
+  const [oemListPriceField, setOemListPriceField] = useState<"ext-price" | "total">("ext-price");
   const [error, setError] = useState("");
   const [report, setReport] = useState<CccMarketImportSummary | null>(null);
   const [fromDate, setFromDate] = useState(previousMonthDate);
@@ -75,7 +84,15 @@ export default function CccMarketPage() {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
-    getCccMarketFilters().then(setFilters).catch((reason) => setError(errorText(reason)));
+    getCccMarketFilters().then((result) => {
+      setFilters(result);
+      setOemListVendors((current) => current.length === 1 && current[0] === "iPart Automotive Inc."
+        ? [result.vendors.find((item) => item.toLocaleLowerCase().includes("ipart")) ?? current[0]]
+        : current);
+      setOemListDescriptions((current) => current.length === 1 && current[0] === "A/M: CAPA"
+        ? [result.descriptions.find((item) => item.toLocaleLowerCase().includes("a/m") && item.toLocaleLowerCase().includes("capa")) ?? current[0]]
+        : current);
+    }).catch((reason) => setError(errorText(reason)));
   }, []);
 
   useEffect(() => {
@@ -241,6 +258,42 @@ export default function CccMarketPage() {
     }
   };
 
+  const toggleOemListOption = (value: string, selected: string[], setSelected: (values: string[]) => void) => {
+    setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+  };
+
+  const exportOemList = async () => {
+    if (!oemListFile || !oemListVendors.length || !oemListDescriptions.length) return;
+    setExportingCrawls(true);
+    setError("");
+    try {
+      await exportCccOemListPrices(oemListFile, {
+        vendors: oemListVendors,
+        descriptions: oemListDescriptions,
+        price_direction: oemListDirection,
+        price_field: oemListPriceField,
+      });
+      setShowOemListExport(false);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setExportingCrawls(false);
+    }
+  };
+
+  const orderSelectedFirst = (options: string[], selected: string[], query: string) => {
+    const searchTerm = query.trim().toLocaleLowerCase();
+    return options
+      .filter((item) => selected.includes(item) || !searchTerm || item.toLocaleLowerCase().includes(searchTerm))
+      .sort((left, right) => {
+        const selectedOrder = Number(!selected.includes(left)) - Number(!selected.includes(right));
+        return selectedOrder || left.localeCompare(right, undefined, { sensitivity: "base" });
+      });
+  };
+
+  const crawlExportVendors = orderSelectedFirst(filters.vendors, oemListVendors, oemListVendorSearch);
+  const crawlExportDescriptions = orderSelectedFirst(filters.descriptions, oemListDescriptions, oemListDescriptionSearch);
+
   const exportDashboard = async () => {
     if (!dashboardVendor || !dashboardData) return;
     setExportingDashboard(true);
@@ -335,7 +388,7 @@ export default function CccMarketPage() {
           {importing ? "Importing…" : "↑ Import Excel"}
           <input type="file" accept=".xlsx,.xlsm" onChange={onImport} disabled={importing} />
         </label>
-        <button className="outline-button" disabled={exportingCrawls} onClick={() => void exportCrawls()}>{exportingCrawls ? "Exporting…" : "↓ Export Excel"}</button>
+        <button className="outline-button" disabled={exportingCrawls} onClick={() => { setOemListFile(null); setCrawlExportMode("all"); setShowOemListExport(true); }}>↓ Export Excel</button>
       </div> : <div className="ccc-toolbar ccc-date-toolbar">
         {activeView === "history" && <>
           <SearchSelect label="OEM" value={historyOem} options={historyOemOptions.map((item) => ({ label: item, value: item }))} placeholder="Search OEM" loading={historyOptionsLoading} emptyMessage="No matching OEMs" clearable onChange={setHistoryOem} className="ccc-filter" />
@@ -442,6 +495,42 @@ export default function CccMarketPage() {
         </div>
       </>}
       {error && <div className="alert error-alert" role="alert">{error}</div>}
+      {showOemListExport && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowOemListExport(false); }}>
+        <section className="modal ccc-oem-export-dialog" role="dialog" aria-modal="true" aria-labelledby="ccc-oem-export-title">
+          <header><div><p className="eyebrow">MARKET / CCC / CRAWL LIST</p><h2 id="ccc-oem-export-title">Export CCC crawls</h2></div><button className="close-button" onClick={() => setShowOemListExport(false)} aria-label="Close CCC export">×</button></header>
+          <div className="ccc-oem-export-options">
+            <label className={`export-choice${crawlExportMode === "all" ? " selected" : ""}`}>
+              <input type="radio" name="ccc-crawl-export-mode" checked={crawlExportMode === "all"} onChange={() => setCrawlExportMode("all")} />
+              <span><strong>Current crawl list</strong><small>Export crawls matching the current search and filters.</small></span>
+            </label>
+            <label className={`export-choice${crawlExportMode === "oem-list" ? " selected" : ""}`}>
+              <input type="radio" name="ccc-crawl-export-mode" checked={crawlExportMode === "oem-list"} onChange={() => setCrawlExportMode("oem-list")} />
+              <span><strong>OEM list from Excel</strong><small>Export one latest-crawl result per OEM from an uploaded list.</small></span>
+            </label>
+            {crawlExportMode === "oem-list" && <>
+              <label className="vehicle-list-upload">OEM list Excel file
+                <input type="file" accept=".xlsx,.xlsm" onChange={(event) => setOemListFile(event.target.files?.[0] ?? null)} />
+                <small>Required column: OEM or OEM Number{oemListFile ? ` · ${oemListFile.name}` : ""}</small>
+              </label>
+              <div className="ccc-oem-export-grid">
+                <fieldset className="ccc-multi-filter"><legend>Vendors</legend><input className="ccc-multi-filter-search" type="search" value={oemListVendorSearch} onChange={(event) => setOemListVendorSearch(event.target.value)} placeholder="Search vendors" aria-label="Search vendors" /><div className="ccc-multi-filter-list">
+                  {crawlExportVendors.map((item) => <label key={item}><input type="checkbox" checked={oemListVendors.includes(item)} onChange={() => toggleOemListOption(item, oemListVendors, setOemListVendors)} /><span>{item}</span></label>)}
+                  {!crawlExportVendors.length && <small className="ccc-multi-filter-empty">No vendors match.</small>}
+                </div></fieldset>
+                <fieldset className="ccc-multi-filter"><legend>Descriptions</legend><input className="ccc-multi-filter-search" type="search" value={oemListDescriptionSearch} onChange={(event) => setOemListDescriptionSearch(event.target.value)} placeholder="Search descriptions" aria-label="Search descriptions" /><div className="ccc-multi-filter-list">
+                  {crawlExportDescriptions.map((item) => <label key={item}><input type="checkbox" checked={oemListDescriptions.includes(item)} onChange={() => toggleOemListOption(item, oemListDescriptions, setOemListDescriptions)} /><span>{item}</span></label>)}
+                  {!crawlExportDescriptions.length && <small className="ccc-multi-filter-empty">No descriptions match.</small>}
+                </div></fieldset>
+              </div>
+              <div className="ccc-oem-export-controls">
+                <fieldset><legend>Winning price</legend><label><input type="radio" name="ccc-oem-direction" checked={oemListDirection === "lowest"} onChange={() => setOemListDirection("lowest")} />Lowest</label><label><input type="radio" name="ccc-oem-direction" checked={oemListDirection === "highest"} onChange={() => setOemListDirection("highest")} />Highest</label></fieldset>
+                <fieldset><legend>Price field</legend><label><input type="radio" name="ccc-oem-price-field" checked={oemListPriceField === "ext-price"} onChange={() => setOemListPriceField("ext-price")} />Ext Price</label><label><input type="radio" name="ccc-oem-price-field" checked={oemListPriceField === "total"} onChange={() => setOemListPriceField("total")} />Total</label></fieldset>
+              </div>
+            </>}
+          </div>
+          <div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowOemListExport(false)}>Cancel</button><button type="button" className="primary-button" disabled={exportingCrawls || (crawlExportMode === "oem-list" && (!oemListFile || !oemListVendors.length || !oemListDescriptions.length))} onClick={() => void (crawlExportMode === "all" ? exportCrawls() : exportOemList())}>{exportingCrawls ? "Preparing…" : "Export Excel"}</button></div>
+        </section>
+      </div>}
       {activeView === "crawls" && report && <div className="import-summary"><div><strong>CCC import complete</strong><span>{report.created} created</span><span>{report.updated} replaced</span><span>{report.skipped} skipped</span></div>{report.errors.length > 0 && <details><summary>{report.errors.length} row issue(s)</summary><ul>{report.errors.map((issue) => <li key={issue}>{issue}</li>)}</ul></details>}<button onClick={() => setReport(null)} aria-label="Dismiss import report">×</button></div>}
       {activeView === "crawls" && <><div className="table-frame ccc-table-frame">
         <table>
