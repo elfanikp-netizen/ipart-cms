@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { client, deleteRecord, downloadExcel, downloadVinExportByVehicleList, errorText, getPage, importExcel, saveVehicle, saveVin } from "./api";
@@ -23,7 +23,11 @@ interface PortalUser { id: number; username: string; display_name: string; role:
 function App() {
   const [user, setUser] = useState<PortalUser | null>(null);
   const [checking, setChecking] = useState(true);
+  const [sidebarVisible, setSidebarVisible] = useState(() => localStorage.getItem("universe.sidebar.hidden") !== "true");
+  const [masterDataExpanded, setMasterDataExpanded] = useState(() => localStorage.getItem("universe.nav.master-data.collapsed") !== "true");
+  const [marketExpanded, setMarketExpanded] = useState(() => localStorage.getItem("universe.nav.market.collapsed") !== "true");
   const location = useLocation();
+  const previousPath = useRef(location.pathname);
   const navigate = useNavigate();
   const activeDataset: Dataset = location.pathname === "/market/parts-msrp"
     ? "parts-msrp"
@@ -41,6 +45,28 @@ function App() {
       .finally(() => setChecking(false));
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem("universe.sidebar.hidden", String(!sidebarVisible));
+  }, [sidebarVisible]);
+
+  useEffect(() => {
+    localStorage.setItem("universe.nav.master-data.collapsed", String(!masterDataExpanded));
+  }, [masterDataExpanded]);
+
+  useEffect(() => {
+    localStorage.setItem("universe.nav.market.collapsed", String(!marketExpanded));
+  }, [marketExpanded]);
+
+  useEffect(() => {
+    if (previousPath.current === location.pathname) return;
+    previousPath.current = location.pathname;
+    if (["/vehicles", "/vins", "/oem", "/partslinks", "/interchanges", "/partslink-interchange", "/activity"].includes(location.pathname)) {
+      setMasterDataExpanded(true);
+    } else if (location.pathname.startsWith("/market/")) {
+      setMarketExpanded(true);
+    }
+  }, [location.pathname]);
+
   if (checking) return <main className="boot-screen">Checking portal session</main>;
   if (!user) {
     window.location.replace("/login");
@@ -48,12 +74,18 @@ function App() {
   }
 
   return (
-    <div className="universe-shell">
-      <aside className="sidebar">
+    <div className={`universe-shell${sidebarVisible ? "" : " sidebar-hidden"}`}>
+      {sidebarVisible && <aside className="sidebar">
         <Link to="/" className="brand-mark"><span className="brand-icon">U</span><span>UNIVERSE<small>MASTER DATA</small></span></Link>
         <div className="side-label">WORKSPACE</div>
-        <div className="menu-parent"><span className="menu-parent-icon">▦</span>MASTER DATA</div>
-        <nav className="subnav" aria-label="Master data">
+        <button
+          className="menu-parent menu-parent-toggle"
+          type="button"
+          aria-expanded={masterDataExpanded}
+          aria-controls="master-data-navigation"
+          onClick={() => setMasterDataExpanded((expanded) => !expanded)}
+        ><span className="menu-parent-icon">▦</span><span>MASTER DATA</span><span className="menu-chevron" aria-hidden="true">{masterDataExpanded ? "−" : "+"}</span></button>
+        <nav className="subnav" id="master-data-navigation" aria-label="Master data" hidden={!masterDataExpanded}>
           <button className={activeDataset === "vehicles" ? "active" : ""} onClick={() => navigate("/vehicles")}><span>01</span>Vehicle</button>
           <button className={activeDataset === "vins" ? "active" : ""} onClick={() => navigate("/vins")}><span>02</span>VIN</button>
           <button className={activeDataset === "oem" ? "active" : ""} onClick={() => navigate("/oem")}><span>03</span>OEM</button>
@@ -62,15 +94,28 @@ function App() {
           <button className={activeDataset === "pairs" ? "active" : ""} onClick={() => navigate("/partslink-interchange")}><span>06</span>Cross-reference</button>
           <button className={activityActive ? "active" : ""} onClick={() => navigate("/activity")}><span>07</span>Activity</button>
         </nav>
-        <div className="menu-parent market-menu-parent"><span className="menu-parent-icon">▤</span>MARKET</div>
-        <nav className="subnav" aria-label="Market">
+        <button
+          className="menu-parent menu-parent-toggle market-menu-parent"
+          type="button"
+          aria-expanded={marketExpanded}
+          aria-controls="market-navigation"
+          onClick={() => setMarketExpanded((expanded) => !expanded)}
+        ><span className="menu-parent-icon">▤</span><span>MARKET</span><span className="menu-chevron" aria-hidden="true">{marketExpanded ? "−" : "+"}</span></button>
+        <nav className="subnav" id="market-navigation" aria-label="Market" hidden={!marketExpanded}>
           <button className={activeDataset === "parts-msrp" ? "active" : ""} onClick={() => navigate("/market/parts-msrp")}><span>01</span>PARTS - MSRP</button>
           <button className={activeDataset === "ccc" ? "active" : ""} onClick={() => navigate("/market/ccc")}><span>02</span>CCC</button>
         </nav>
         <div className="sidebar-bottom"><a href="/">← Portal home</a><span>IPART · DATA SERVICES</span></div>
-      </aside>
+      </aside>}
       <main className="main-area">
-        <header className="topbar"><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" || activeDataset === "parts-msrp" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : activeDataset === "partslinks" ? "Partslink" : activeDataset === "interchanges" ? "Interchange" : activeDataset === "pairs" ? "Cross-reference" : activeDataset === "parts-msrp" ? "PARTS - MSRP" : "CCC"}</strong></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
+        <header className="topbar"><div className="topbar-left"><button
+          className="sidebar-toggle"
+          type="button"
+          aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+          aria-expanded={sidebarVisible}
+          title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+          onClick={() => setSidebarVisible((visible) => !visible)}
+        ><span aria-hidden="true">{sidebarVisible ? "‹" : "☰"}</span></button><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" || activeDataset === "parts-msrp" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : activeDataset === "partslinks" ? "Partslink" : activeDataset === "interchanges" ? "Interchange" : activeDataset === "pairs" ? "Cross-reference" : activeDataset === "parts-msrp" ? "PARTS - MSRP" : "CCC"}</strong></div></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
         <Routes>
           <Route path="/" element={<Navigate to="/vehicles" replace />} />
           <Route path="/vehicles" element={<MasterDataPage dataset="vehicles" />} />
