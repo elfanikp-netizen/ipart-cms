@@ -547,11 +547,14 @@ export async function downloadOemsExcel(params: { search: string; filters: strin
   saveBlob(response.data, "oems.xlsx");
 }
 
-export async function downloadOemsByList(file: File) {
+export type ExportListType = "oem" | "partslink" | "interchange";
+
+export async function downloadOemsByList(file: File, listType: ExportListType = "oem") {
   const form = new FormData();
   form.append("file", file);
+  form.append("list_type", listType);
   const response = await client.post<Blob>("/api/universe/oems/export-by-list", form, { responseType: "blob" });
-  saveBlob(response.data, "oems-by-list.xlsx");
+  saveBlob(response.data, `oems-by-${listType}.xlsx`);
 }
 
 export type OemValues = { id_vin: number | null; oem: string; description: string; notes: string; source_id_vin?: number | null };
@@ -639,11 +642,12 @@ export async function downloadCatalogPairsExcel(params: { search: string; filter
   saveBlob(response.data, "partslink-interchange.xlsx");
 }
 
-export async function downloadCatalogByOem(kind: CatalogKind, file: File) {
+export async function downloadCatalogByList(kind: CatalogKind, file: File, listType: ExportListType = "oem") {
   const form = new FormData();
   form.append("file", file);
-  const response = await client.post<Blob>(`/api/universe/${kind}/export-by-oem`, form, { responseType: "blob" });
-  saveBlob(response.data, `${kind}-by-oem.xlsx`);
+  form.append("list_type", listType);
+  const response = await client.post<Blob>(`/api/universe/${kind}/export-by-list`, form, { responseType: "blob" });
+  saveBlob(response.data, `${kind}-by-${listType}.xlsx`);
 }
 
 export async function saveCatalog(kind: CatalogKind, id: number | null, values: { partslink?: string; interchange?: string; description: string; notes: string }) {

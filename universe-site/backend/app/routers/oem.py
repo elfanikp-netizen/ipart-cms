@@ -1,7 +1,7 @@
 import math
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import String, cast, func, or_, select
@@ -337,69 +337,94 @@ def export_oems(
 @router.post("/export-by-list")
 def export_oems_by_list(
     file: UploadFile = File(...),
+    list_type: str = Form("oem"),
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
+    list_type = list_type.strip().casefold()
+    if list_type not in {"oem", "partslink", "interchange"}:
+        raise HTTPException(400, "List type must be OEM, Partslink, or Interchange")
     workbook, rows, indexes = workbook_rows(file)
     requested_rows: list[tuple[str, str, str | None]] = []
+    list_header = next(
+        (normalize_excel_header(alias) for alias in {
+            "oem": ("OEM", "OEM Number"),
+            "partslink": ("Partslink", "Partslink Number"),
+            "interchange": ("Interchange", "Interchange Number"),
+        }[list_type] if normalize_excel_header(alias) in indexes),
+        normalize_excel_header(list_type),
+    )
     try:
-        if "oem" not in indexes:
-            raise HTTPException(400, "Missing required Excel column: OEM")
+        if list_header not in indexes:
+            raise HTTPException(400, f"Missing required Excel column: {list_type.title()}")
         keys: set[tuple[str, str] | tuple[str, None]] = set()
         for row_number, row in enumerate(rows, start=2):
             try:
-                uploaded_oem = normalize_text(get_cell(row, indexes["oem"]), "OEM")
-                oem_key = normalized_key(uploaded_oem)
+                uploaded_number = normalize_text(get_cell(row, indexes[list_header]), list_type.title())
+                number_key = normalized_key(uploaded_number)
                 vin_key = normalize_vin(get_cell(row, indexes["vin"])) if "vin" in indexes and get_cell(row, indexes["vin"]) else None
-                keys.add((oem_key, vin_key))
-                requested_rows.append((uploaded_oem, oem_key, vin_key))
+                keys.add((number_key, vin_key))
+                requested_rows.append((uploaded_number, number_key, vin_key))
             except ValueError as error:
                 raise HTTPException(400, f"Row {row_number}: {error}") from error
     finally:
         workbook.close()
 
-    all_oems = {oem_key for oem_key, vin_key in keys if vin_key is None}
-    requested_vins = {(oem_key, vin_key) for oem_key, vin_key in keys if vin_key is not None}
-    conditions = [Oem.oem_key.in_(all_oems)] if all_oems else []
-    conditions.extend(
-        Oem.vins.any(Vin.vin_key == vin_key) & (Oem.oem_key == oem_key)
-        for oem_key, vin_key in requested_vins
-    )
-    stmt = select(Oem).options(selectinload(Oem.vins).joinedload(Vin.vehicle))
-    stmt = stmt.where(or_(*conditions)) if conditions else stmt.where(False)
-    items = db.scalars(stmt.order_by(Oem.oem_key)).all()
-    items_by_oem = {item.oem_key: item for item in items}
+    keys_only = {number_key for number_key, _ in keys}
+    if list_type == "oem":
+        conditions = [Oem.oem_key.in_(keys_only)] if keys_only else []
+        conditions.extend(
+            Oem.vins.any(Vin.vin_key == vin_key) & (Oem.oem_key == number_key)
+            for number_key, vin_key in keys if vin_key is not None
+        )
+        stmt = select(Oem).options(selectinload(Oem.vins).joinedload(Vin.vehicle))
+        stmt = stmt.where(or_(*conditions)) if conditions else stmt.where(False)
+        items = db.scalars(stmt.order_by(Oem.oem_key)).all()
+        items_by_key = {item.oem_key: item for item in items}
+    else:
+        source_model = Partslink if list_type == "partslink" else Interchange
+        source_key = f"{list_type}_key"
+        source_items = db.scalars(
+            select(source_model).where(getattr(source_model, source_key).in_(keys_only))
+            .options(selectinload(source_model.oems).selectinload(Oem.vins).joinedload(Vin.vehicle))
+        ).all() if keys_only else []
+        items_by_key = {getattr(item, source_key): item for item in source_items}
 
     output = Workbook(write_only=True)
     sheet = output.create_sheet("OEM")
-    sheet.append(["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"])
+    base_headers = ["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"]
+    sheet.append(base_headers if list_type == "oem" else [list_type.upper(), *base_headers])
     exported_count = 0
-    for uploaded_oem, oem_key, vin_key in requested_rows:
-        if vin_key is None:
-            item = items_by_oem.get(oem_key)
-            if item is not None and item.vins:
-                for vin_item in sorted(item.vins, key=lambda value: value.vin_key):
-                    vehicle = vin_item.vehicle
-                    sheet.append([item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
-                                  item.description, item.notes])
-                    exported_count += 1
-            elif item is not None:
-                sheet.append([item.oem, None, None, None, None, item.description, item.notes])
-                exported_count += 1
-            else:
-                sheet.append([uploaded_oem, None, None, None, None, None, None])
-                exported_count += 1
+    for uploaded_number, number_key, vin_key in requested_rows:
+        if list_type == "oem":
+            item = items_by_key.get(number_key)
+            matching_oems = [item] if item is not None else []
         else:
-            item = items_by_oem.get(oem_key)
-            vin_item = next((value for value in item.vins if value.vin_key == vin_key), None) if item else None
-            if item is not None and vin_item is not None:
-                vehicle = vin_item.vehicle
-                sheet.append([item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
-                              item.description, item.notes])
-            else:
-                sheet.append([uploaded_oem, vin_key, None, None, None, None, None])
+            source_item = items_by_key.get(number_key)
+            matching_oems = sorted(source_item.oems, key=lambda value: value.oem_key) if source_item else []
+
+        if not matching_oems:
+            row = [uploaded_number, None, None, None, None, None, None]
+            sheet.append(row if list_type == "oem" else [uploaded_number, *row])
             exported_count += 1
-    log_activity(db, user, "export_oems_by_list", f"exported {exported_count} OEM records from supplied list")
+            continue
+
+        for item in matching_oems:
+            vins = sorted(item.vins, key=lambda value: value.vin_key)
+            if vin_key is not None:
+                vins = [value for value in vins if value.vin_key == vin_key]
+            if vins:
+                for vin_item in vins:
+                    vehicle = vin_item.vehicle
+                    row = [item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
+                           item.description, item.notes]
+                    sheet.append(row if list_type == "oem" else [uploaded_number, *row])
+                    exported_count += 1
+            else:
+                row = [item.oem, vin_key, None, None, None, item.description, item.notes]
+                sheet.append(row if list_type == "oem" else [uploaded_number, *row])
+                exported_count += 1
+    log_activity(db, user, "export_oems_by_list", f"exported {exported_count} OEM records from supplied {list_type} list")
     return excel_response(output, "oems-by-list.xlsx")
 
 

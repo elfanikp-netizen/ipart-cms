@@ -1,0 +1,117 @@
+import asyncio
+from io import BytesIO
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from fastapi import UploadFile
+from openpyxl import Workbook, load_workbook
+
+from app.routers.catalogs import (
+    catalog_pair_export_headers,
+    catalog_pair_export_row,
+    export_catalog_by_list,
+)
+from app.routers.oem import export_oems_by_list
+
+
+def upload_workbook(headers, values):
+    workbook = Workbook()
+    workbook.active.append(headers)
+    workbook.active.append(values)
+    content = BytesIO()
+    workbook.save(content)
+    workbook.close()
+    content.seek(0)
+    return UploadFile(filename="export-list.xlsx", file=content)
+
+
+def response_rows(response):
+    async def read_body():
+        return b"".join([chunk async for chunk in response.body_iterator])
+
+    content = BytesIO(asyncio.run(read_body()))
+    workbook = load_workbook(content, read_only=True, data_only=True)
+    try:
+        return list(workbook.active.iter_rows(values_only=True))
+    finally:
+        workbook.close()
+
+
+class MasterDataExportTests(unittest.TestCase):
+    def test_cross_reference_export_adds_one_oem_column_per_shared_oem(self):
+        oems = ["OEM-4", "OEM-2", "OEM-1", "OEM-3"]
+        pair = (1, 2)
+        mapping = {pair: oems}
+
+        headers = catalog_pair_export_headers(mapping)
+        row = catalog_pair_export_row("P-100", "I-200", oems, len(headers) - 3)
+
+        self.assertEqual(headers, [
+            "PARTSLINK", "INTERCHANGE", "SHARED OEM PARTS", "OEM1", "OEM2", "OEM3", "OEM4",
+        ])
+        self.assertEqual(row, ["P-100", "I-200", 4, "OEM-1", "OEM-2", "OEM-3", "OEM-4"])
+
+    def test_catalog_export_can_select_interchange_list(self):
+        oem = SimpleNamespace(oem="OEM-1", oem_key="oem-1", description="OEM description", partslinks=[])
+        target = SimpleNamespace(partslink="P-100", partslink_key="p-100", description="Parts description")
+        oem.partslinks = [target]
+        source = SimpleNamespace(interchange="I-200", interchange_key="i-200", oems=[oem])
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [source]
+        user = SimpleNamespace(id=1)
+
+        with patch("app.routers.catalogs.log_activity"):
+            response = export_catalog_by_list(
+                "partslinks", upload_workbook(["Interchange Number"], ["I-200"]),
+                "interchange", session, user,
+            )
+
+        rows = response_rows(response)
+        self.assertEqual(rows[0], ("INTERCHANGE", "PARTSLINK", "OEM", "Description"))
+        self.assertEqual(rows[1], ("I-200", "P-100", "OEM-1", "OEM description"))
+
+    def test_catalog_export_keeps_existing_oem_list_workbook_shape(self):
+        oem = SimpleNamespace(oem="OEM-1", oem_key="oem-1", description="OEM description", partslinks=[])
+        target = SimpleNamespace(partslink="P-100", partslink_key="p-100", description="Parts description")
+        oem.partslinks = [target]
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [oem]
+        user = SimpleNamespace(id=1)
+
+        with patch("app.routers.catalogs.log_activity"):
+            response = export_catalog_by_list(
+                "partslinks", upload_workbook(["oEm"], ["OEM-1"]), "oem", session, user,
+            )
+
+        rows = response_rows(response)
+        self.assertEqual(rows[0], ("PARTSLINK", "OEM", "Description"))
+        self.assertEqual(rows[1], ("P-100", "OEM-1", "OEM description"))
+
+    def test_oem_export_can_select_partslink_list_and_expand_vin_fitment(self):
+        vehicle = SimpleNamespace(year=2020, make="Ford", model="Explorer")
+        vin = SimpleNamespace(vin="1FM5K8", vin_key="1fm5k8", vehicle=vehicle)
+        oem = SimpleNamespace(
+            oem="OEM-1", oem_key="oem-1", description="Headlamp", notes="", vins=[vin],
+        )
+        source = SimpleNamespace(partslink="P-100", partslink_key="p-100", oems=[oem])
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [source]
+        user = SimpleNamespace(id=1)
+
+        with patch("app.routers.oem.log_activity"):
+            response = export_oems_by_list(
+                upload_workbook(["Partslink Number"], ["P-100"]), "partslink", session, user,
+            )
+
+        rows = response_rows(response)
+        self.assertEqual(rows[0], (
+            "PARTSLINK", "OEM", "VIN", "Year", "Make", "Model", "Description", "Notes",
+        ))
+        self.assertEqual(rows[1], (
+            "P-100", "OEM-1", "1FM5K8", 2020, "Ford", "Explorer", "Headlamp", None,
+        ))
+
+
+if __name__ == "__main__":
+    unittest.main()

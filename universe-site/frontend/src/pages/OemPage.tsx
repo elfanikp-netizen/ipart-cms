@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { client, deleteOem, downloadOemsByList, downloadOemsExcel, errorText, importOemsExcel } from "../api";
+import type { ExportListType } from "../api";
 import type { Oem, OemImportSummary, Page } from "../api";
 import OemForm from "../components/OemForm";
 import ColumnHeader from "../components/ColumnHeader";
@@ -22,6 +23,7 @@ export default function OemPage() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportFile, setExportFile] = useState<File | null>(null);
   const [exportMode, setExportMode] = useState<"all" | "list">("all");
+  const [exportListType, setExportListType] = useState<ExportListType>("oem");
   const [modal, setModal] = useState<Oem | null | "new">(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
@@ -92,7 +94,7 @@ export default function OemPage() {
     setExporting(true);
     setError("");
     try {
-      await downloadOemsByList(exportFile);
+      await downloadOemsByList(exportFile, exportListType);
       setShowExportDialog(false);
     } catch (reason) {
       setError(errorText(reason));
@@ -140,7 +142,7 @@ export default function OemPage() {
           {importing ? "Importing…" : "↑ Import Excel"}
           <input type="file" accept=".xlsx,.xlsm" onChange={onImport} disabled={importing} />
         </label>
-        <button className="outline-button" disabled={exporting} onClick={() => { setExportFile(null); setExportMode("all"); setShowExportDialog(true); }}>↓ Export Excel</button>
+        <button className="outline-button" disabled={exporting} onClick={() => { setExportFile(null); setExportListType("oem"); setExportMode("all"); setShowExportDialog(true); }}>↓ Export Excel</button>
       </div>
       {error && <div className="alert error-alert" role="alert">{error}</div>}
       {notice && <div className="alert success-alert" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss message">×</button></div>}
@@ -157,7 +159,7 @@ export default function OemPage() {
       </div>
       <div className="table-footer"><span>{data.total === 0 ? "0 records" : `${first}–${last} of ${data.total.toLocaleString()}`}</span><div><button disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)}>← Previous</button><span>Page {page}{data.pages ? ` of ${data.pages}` : ""}</span><button disabled={page >= data.pages || loading} onClick={() => setPage((value) => value + 1)}>Next →</button></div></div>
       {modal !== null && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="oem-form-title"><header><div><p className="eyebrow">MASTER DATA / OEM</p><h2 id="oem-form-title">{modal === "new" ? "Add OEM" : "Edit OEM"}</h2></div><button className="close-button" onClick={() => setModal(null)} aria-label="Close dialog">×</button></header><OemForm value={modal === "new" ? null : modal} onSaved={onSaved} onCancel={() => setModal(null)} /></section></div>}
-      {showExportDialog && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowExportDialog(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="oem-export-title"><header><div><p className="eyebrow">MASTER DATA</p><h2 id="oem-export-title">Export OEMs</h2></div><button className="close-button" onClick={() => setShowExportDialog(false)} aria-label="Close dialog">×</button></header><div className="export-options"><label className={`export-choice${exportMode === "all" ? " selected" : ""}`}><input type="radio" name="oem-export-mode" checked={exportMode === "all"} onChange={() => setExportMode("all")} /><span><strong>Current search results</strong><small>Export OEM records matching the current search and filters.</small></span></label><label className={`export-choice${exportMode === "list" ? " selected" : ""}`}><input type="radio" name="oem-export-mode" checked={exportMode === "list"} onChange={() => setExportMode("list")} /><span><strong>OEM list from Excel</strong><small>Upload an OEM list; add VIN to narrow results to specific vehicle fitments.</small></span></label>{exportMode === "list" && <label className="vehicle-list-upload">Excel file<input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} /><small>Required column: OEM · Optional column: VIN{exportFile ? ` · ${exportFile.name}` : ""}</small></label>}</div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowExportDialog(false)}>Cancel</button><button type="button" className="primary-button" disabled={exporting || (exportMode === "list" && !exportFile)} onClick={() => void (exportMode === "all" ? exportAll() : exportList())}>{exporting ? "Preparing…" : "Export OEMs"}</button></div></section></div>}
+      {showExportDialog && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowExportDialog(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="oem-export-title"><header><div><p className="eyebrow">MASTER DATA</p><h2 id="oem-export-title">Export OEMs</h2></div><button className="close-button" onClick={() => setShowExportDialog(false)} aria-label="Close dialog">×</button></header><div className="export-options"><label className={`export-choice${exportMode === "all" ? " selected" : ""}`}><input type="radio" name="oem-export-mode" checked={exportMode === "all"} onChange={() => setExportMode("all")} /><span><strong>Current search results</strong><small>Export OEM records matching the current search and filters.</small></span></label><label className={`export-choice${exportMode === "list" ? " selected" : ""}`}><input type="radio" name="oem-export-mode" checked={exportMode === "list"} onChange={() => setExportMode("list")} /><span><strong>List from Excel</strong><small>Export OEM records linked to the selected list type.</small></span></label>{exportMode === "list" && <><label className="vehicle-list-upload">List type<select value={exportListType} onChange={(event) => setExportListType(event.target.value as ExportListType)}><option value="oem">OEM</option><option value="partslink">Partslink</option><option value="interchange">Interchange</option></select></label><label className="vehicle-list-upload">Excel file<input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} /><small>Required column: {exportListType === "oem" ? "OEM" : exportListType === "partslink" ? "Partslink" : "Interchange"}{exportListType === "oem" ? " · Optional column: VIN" : ""}{exportFile ? ` · ${exportFile.name}` : ""}</small></label></>}</div><div className="modal-actions"><button type="button" className="outline-button" onClick={() => setShowExportDialog(false)}>Cancel</button><button type="button" className="primary-button" disabled={exporting || (exportMode === "list" && !exportFile)} onClick={() => void (exportMode === "all" ? exportAll() : exportList())}>{exporting ? "Preparing…" : "Export OEMs"}</button></div></section></div>}
     </section>
   );
 }

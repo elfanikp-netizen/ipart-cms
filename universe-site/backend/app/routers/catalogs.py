@@ -2,10 +2,10 @@ import math
 from io import BytesIO
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import false, func, or_, select
+from sqlalchemy import false, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -44,6 +44,16 @@ SPECS = {
 
 def get_spec(kind: str) -> CatalogSpec:
     return SPECS[kind]
+
+
+def catalog_pair_export_headers(oems_by_pair: dict[tuple[int, int], list[str]]) -> list[str]:
+    max_oems = max((len(values) for values in oems_by_pair.values()), default=0)
+    return ["PARTSLINK", "INTERCHANGE", "SHARED OEM PARTS", *(f"OEM{index}" for index in range(1, max_oems + 1))]
+
+
+def catalog_pair_export_row(partslink: str, interchange: str, oems: list[str], width: int) -> list[str | int]:
+    ordered_oems = sorted(oems, key=str.casefold)
+    return [partslink, interchange, len(ordered_oems), *ordered_oems, *("" for _ in range(width - len(ordered_oems)))]
 
 
 def open_workbook(file: UploadFile):
@@ -228,11 +238,30 @@ def export_catalog_pairs(search: str, filters: str, sort_by: str, sort_dir: str,
         (pairs.c.latest_updated_at.desc(), pairs.c.partslink, pairs.c.interchange),
     )
     rows = db.execute(stmt).mappings().all()
+    pair_ids = [(row["id_partslink"], row["id_interchange"]) for row in rows]
+    oems_by_pair: dict[tuple[int, int], list[str]] = {pair_id: [] for pair_id in pair_ids}
+    if pair_ids:
+        linked_oems = db.execute(
+            select(OEM_PARTSLINK.c.id_partslink, OEM_INTERCHANGE.c.id_interchange, Oem.oem)
+            .select_from(OEM_PARTSLINK)
+            .join(Oem, Oem.id == OEM_PARTSLINK.c.id_oem)
+            .join(OEM_INTERCHANGE, OEM_INTERCHANGE.c.id_oem == Oem.id)
+            .where(tuple_(OEM_PARTSLINK.c.id_partslink, OEM_INTERCHANGE.c.id_interchange).in_(pair_ids))
+            .order_by(Oem.oem_key)
+        ).all()
+        for id_partslink, id_interchange, oem in linked_oems:
+            oems_by_pair[(id_partslink, id_interchange)].append(oem)
+
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Partslink Interchange")
-    sheet.append(["PARTSLINK", "INTERCHANGE", "SHARED OEM PARTS"])
+    headers = catalog_pair_export_headers(oems_by_pair)
+    sheet.append(headers)
+    oem_width = len(headers) - 3
     for row in rows:
-        sheet.append([row["partslink"], row["interchange"], row["distinct_oem_count"]])
+        pair_id = (row["id_partslink"], row["id_interchange"])
+        sheet.append(catalog_pair_export_row(
+            row["partslink"], row["interchange"], oems_by_pair[pair_id], oem_width
+        ))
     log_activity(db, user, "export_partslink_interchange",
                  f"exported {len(rows)} filtered Partslink/Interchange pairs")
     return excel_response(workbook, "partslink-interchange.xlsx")
@@ -448,44 +477,105 @@ def export_catalog(kind: str, search: str, filters: str, sort_by: str, sort_dir:
     return excel_response(workbook, f"{kind}.xlsx")
 
 
-def export_catalog_by_oems(kind: str, file: UploadFile, db: Session, user: PortalUser):
+def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Session, user: PortalUser):
     spec = get_spec(kind)
+    list_type = list_type.strip().casefold()
+    if list_type not in {"oem", "partslink", "interchange"}:
+        raise HTTPException(400, "List type must be OEM, Partslink, or Interchange")
     workbook, rows, indexes = open_workbook(file)
     requested: list[tuple[str, str]] = []
+    input_header = next(
+        (normalize_excel_header(alias) for alias in {
+            "oem": ("OEM", "OEM Number"),
+            "partslink": ("Partslink", "Partslink Number"),
+            "interchange": ("Interchange", "Interchange Number"),
+        }[list_type] if normalize_excel_header(alias) in indexes),
+        normalize_excel_header(list_type),
+    )
     try:
-        if "oem" not in indexes:
-            raise HTTPException(400, "Missing required Excel column: OEM")
+        if input_header not in indexes:
+            raise HTTPException(400, f"Missing required Excel column: {list_type.title()}")
         for row_number, row in enumerate(rows, start=2):
             try:
-                number = normalize_text(get_cell(row, indexes["oem"]), "OEM")
+                number = normalize_text(get_cell(row, indexes[input_header]), list_type.title())
                 requested.append((number, normalized_key(number)))
             except ValueError as error:
                 raise HTTPException(400, f"Row {row_number}: {error}") from error
     finally:
         workbook.close()
 
-    model = spec.model
-    value_column = getattr(model, spec.value_field)
-    key_column = getattr(model, f"{spec.value_field}_key")
+    source_is_oem = list_type == "oem"
+    source_spec = SPECS.get(f"{list_type}s")
+    source_model = Oem if source_is_oem else source_spec.model
+    source_key_column = Oem.oem_key if source_is_oem else getattr(source_model, f"{list_type}_key")
+    target_relationship = "partslinks" if kind == "partslinks" else "interchanges"
+    target_label = spec.label.upper()
+    if source_is_oem:
+        source_items = db.scalars(
+            select(Oem).where(source_key_column.in_({key for _, key in requested}))
+            .options(selectinload(getattr(Oem, target_relationship)))
+        ).all() if requested else []
+    else:
+        source_items = db.scalars(
+            select(source_model).where(source_key_column.in_({key for _, key in requested}))
+            .options(selectinload(source_model.oems).selectinload(getattr(Oem, target_relationship)))
+        ).all() if requested else []
+    source_items_by_key = {
+        (item.oem_key if source_is_oem else getattr(item, f"{list_type}_key")): item
+        for item in source_items
+    }
+
     result_workbook = Workbook(write_only=True)
     sheet = result_workbook.create_sheet(spec.label)
-    sheet.append([spec.label.upper(), "OEM", "Description"])
+    sheet.append(
+        [target_label, "OEM", "Description"]
+        if source_is_oem else [list_type.upper(), target_label, "OEM", "Description"]
+    )
     exported = 0
-    for uploaded_oem, oem_key in requested:
-        oem = db.scalar(select(Oem).options(selectinload(Oem.partslinks), selectinload(Oem.interchanges))
-                         .where(Oem.oem_key == oem_key))
-        catalogs = []
-        if oem is not None:
-            catalogs = oem.partslinks if kind == "partslinks" else oem.interchanges
-        if catalogs:
-            for item in sorted(catalogs, key=lambda value: getattr(value, f"{spec.value_field}_key")):
-                sheet.append([getattr(item, spec.value_field), oem.oem, oem.description or item.description])
-                exported += 1
+    for uploaded_number, number_key in requested:
+        source_item = source_items_by_key.get(number_key)
+        if source_is_oem:
+            oems = [source_item] if source_item else []
+            target_catalogs = getattr(source_item, target_relationship, []) if source_item else []
         else:
-            sheet.append([None, uploaded_oem, None])
+            oems = list(source_item.oems) if source_item else []
+            target_catalogs_by_key = {}
+            if list_type == spec.value_field and source_item:
+                target_catalogs_by_key[getattr(source_item, f"{spec.value_field}_key")] = source_item
+            else:
+                for oem in oems:
+                    for target_item in getattr(oem, target_relationship):
+                        target_catalogs_by_key[getattr(target_item, f"{spec.value_field}_key")] = target_item
+            target_catalogs = list(target_catalogs_by_key.values())
+
+        if target_catalogs:
+            target_catalogs.sort(key=lambda value: getattr(value, f"{spec.value_field}_key"))
+            for target_item in target_catalogs:
+                linked_oems = sorted(
+                    [oem for oem in oems if target_item in getattr(oem, target_relationship)],
+                    key=lambda value: value.oem_key,
+                )
+                if source_is_oem:
+                    linked_oems = oems
+                for oem in linked_oems or [None]:
+                    row = [getattr(target_item, spec.value_field), oem.oem if oem else None,
+                           (oem.description if oem else "") or target_item.description]
+                    if not source_is_oem:
+                        row.insert(0, uploaded_number)
+                    sheet.append(row)
+                    exported += 1
+        elif not source_is_oem:
+            sheet.append([uploaded_number, None, None, None])
             exported += 1
-    log_activity(db, user, f"export_{kind}_by_oem", f"exported {exported} mappings from an OEM list")
-    return excel_response(result_workbook, f"{kind}-by-oem.xlsx")
+        else:
+            sheet.append([None, uploaded_number, None])
+            exported += 1
+    log_activity(db, user, f"export_{kind}_by_list", f"exported {exported} mappings from a {list_type} list")
+    return excel_response(result_workbook, f"{kind}-by-{list_type}.xlsx")
+
+
+def export_catalog_by_oems(kind: str, file: UploadFile, db: Session, user: PortalUser):
+    return export_catalog_by_list(kind, file, "oem", db, user)
 
 
 def create_catalog(kind: str, payload: dict[str, Any], db: Session, user: PortalUser):
@@ -595,15 +685,27 @@ def export_interchanges(search: str = "", filters: str = "", sort_by: str = "", 
 
 
 @router.post("/partslinks/export-by-oem")
-def export_partslinks_by_oem(file: UploadFile = File(...), db: Session = Depends(get_db),
-                             user: PortalUser = Depends(get_current_user)):
-    return export_catalog_by_oems("partslinks", file, db, user)
+def export_partslinks_by_oem(file: UploadFile = File(...), list_type: str = Form("oem"),
+                             db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
+    return export_catalog_by_list("partslinks", file, list_type, db, user)
+
+
+@router.post("/partslinks/export-by-list")
+def export_partslinks_by_list(file: UploadFile = File(...), list_type: str = Form("oem"),
+                              db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
+    return export_catalog_by_list("partslinks", file, list_type, db, user)
 
 
 @router.post("/interchanges/export-by-oem")
-def export_interchanges_by_oem(file: UploadFile = File(...), db: Session = Depends(get_db),
-                               user: PortalUser = Depends(get_current_user)):
-    return export_catalog_by_oems("interchanges", file, db, user)
+def export_interchanges_by_oem(file: UploadFile = File(...), list_type: str = Form("oem"),
+                               db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
+    return export_catalog_by_list("interchanges", file, list_type, db, user)
+
+
+@router.post("/interchanges/export-by-list")
+def export_interchanges_by_list(file: UploadFile = File(...), list_type: str = Form("oem"),
+                                db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
+    return export_catalog_by_list("interchanges", file, list_type, db, user)
 
 
 @router.post("/partslinks/import")
