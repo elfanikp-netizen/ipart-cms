@@ -227,6 +227,20 @@ def parts_msrp_items(
     return filter_sort_parts_msrp(enriched, filters, sort_by, sort_dir)
 
 
+def parts_msrp_export_rows(items: list[dict[str, Any]], group_by_oem: bool) -> list[dict[str, Any]]:
+    if not group_by_oem:
+        return items
+    result = []
+    seen_oems: set[str] = set()
+    for item in items:
+        key = normalized_key(item["oem"])
+        if key in seen_oems:
+            continue
+        seen_oems.add(key)
+        result.append({**item, "fitments": item["fitments"][:1]})
+    return result
+
+
 @router.get("")
 def list_parts_msrp(
     page: int = Query(1, ge=1),
@@ -259,10 +273,13 @@ def export_parts_msrp(
     sort_dir: str = "asc",
     from_date: date | None = None,
     to_date: date | None = None,
+    group_by_oem: bool = True,
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
-    items = parts_msrp_items(db, search, filters, sort_by, sort_dir, from_date, to_date)
+    items = parts_msrp_export_rows(
+        parts_msrp_items(db, search, filters, sort_by, sort_dir, from_date, to_date), group_by_oem
+    )
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("Parts MSRP")
     sheet.append([
@@ -292,6 +309,7 @@ def export_parts_msrp_by_list(
     file: UploadFile = File(...),
     from_date: date | None = None,
     to_date: date | None = None,
+    group_by_oem: bool = True,
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
@@ -321,7 +339,7 @@ def export_parts_msrp_by_list(
     records = db.scalars(
         stmt.order_by(PartsMsrp.crawl_date.desc(), PartsMsrp.oem, PartsMsrp.id.desc())
     ).all()
-    items = enrich_parts_msrp_records(db, records)
+    items = parts_msrp_export_rows(enrich_parts_msrp_records(db, records), group_by_oem)
     output = Workbook(write_only=True)
     sheet = output.create_sheet("Parts MSRP")
     sheet.append([

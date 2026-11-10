@@ -411,6 +411,7 @@ export async function exportPartsMsrpExcel(params: {
   sort_dir: "asc" | "desc";
   from_date: string;
   to_date: string;
+  group_by_oem: boolean;
 }) {
   const response = await client.get<Blob>("/api/universe/market/parts-msrp/export", {
     params: { ...params, search: params.search || undefined },
@@ -419,11 +420,11 @@ export async function exportPartsMsrpExcel(params: {
   saveBlob(response.data, "parts-msrp.xlsx");
 }
 
-export async function exportPartsMsrpByOemList(file: File, fromDate: string, toDate: string) {
+export async function exportPartsMsrpByOemList(file: File, fromDate: string, toDate: string, groupByOem: boolean) {
   const form = new FormData();
   form.append("file", file);
   const response = await client.post<Blob>("/api/universe/market/parts-msrp/export-by-list", form, {
-    params: { from_date: fromDate || undefined, to_date: toDate || undefined },
+    params: { from_date: fromDate || undefined, to_date: toDate || undefined, group_by_oem: groupByOem },
     responseType: "blob",
   });
   saveBlob(response.data, "parts-msrp-by-oem.xlsx");
@@ -539,7 +540,7 @@ export async function importOemsExcel(file: File) {
   return (await client.post<OemImportSummary>("/api/universe/oems/import", form)).data;
 }
 
-export async function downloadOemsExcel(params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc" }) {
+export async function downloadOemsExcel(params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc"; group_by_type: boolean }) {
   const response = await client.get<Blob>("/api/universe/oems/export", {
     params: { ...params, search: params.search || undefined },
     responseType: "blob",
@@ -549,10 +550,11 @@ export async function downloadOemsExcel(params: { search: string; filters: strin
 
 export type ExportListType = "oem" | "partslink" | "interchange";
 
-export async function downloadOemsByList(file: File, listType: ExportListType = "oem") {
+export async function downloadOemsByList(file: File, listType: ExportListType = "oem", groupByType = true) {
   const form = new FormData();
   form.append("file", file);
   form.append("list_type", listType);
+  form.append("group_by_type", String(groupByType));
   const response = await client.post<Blob>("/api/universe/oems/export-by-list", form, { responseType: "blob" });
   saveBlob(response.data, `oems-by-${listType}.xlsx`);
 }
@@ -632,7 +634,7 @@ export async function importCatalogExcel(kind: CatalogKind, file: File) {
   return (await client.post<CatalogImportSummary>(`/api/universe/${kind}/import`, form)).data;
 }
 
-export async function downloadCatalogExcel(kind: CatalogKind, params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc" }) {
+export async function downloadCatalogExcel(kind: CatalogKind, params: { search: string; filters: string; sort_by: string; sort_dir: "asc" | "desc"; group_by_type: boolean }) {
   const response = await client.get<Blob>(`/api/universe/${kind}/export`, { params, responseType: "blob" });
   saveBlob(response.data, `${kind}.xlsx`);
 }
@@ -642,10 +644,11 @@ export async function downloadCatalogPairsExcel(params: { search: string; filter
   saveBlob(response.data, "partslink-interchange.xlsx");
 }
 
-export async function downloadCatalogByList(kind: CatalogKind, file: File, listType: ExportListType = "oem") {
+export async function downloadCatalogByList(kind: CatalogKind, file: File, listType: ExportListType = "oem", groupByType = true) {
   const form = new FormData();
   form.append("file", file);
   form.append("list_type", listType);
+  form.append("group_by_type", String(groupByType));
   const response = await client.post<Blob>(`/api/universe/${kind}/export-by-list`, form, { responseType: "blob" });
   saveBlob(response.data, `${kind}-by-${listType}.xlsx`);
 }

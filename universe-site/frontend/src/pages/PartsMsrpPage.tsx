@@ -61,6 +61,7 @@ export default function PartsMsrpPage() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportMode, setExportMode] = useState<"all" | "list">("all");
   const [exportFile, setExportFile] = useState<File | null>(null);
+  const [groupByOem, setGroupByOem] = useState(true);
 
   useEffect(() => {
     let current = true;
@@ -141,6 +142,7 @@ export default function PartsMsrpPage() {
         sort_dir: sort.direction,
         from_date: fromDate,
         to_date: toDate,
+        group_by_oem: groupByOem,
       });
       setShowExportDialog(false);
     } catch (reason) {
@@ -155,7 +157,7 @@ export default function PartsMsrpPage() {
     setExporting(true);
     setError("");
     try {
-      await exportPartsMsrpByOemList(exportFile, fromDate, toDate);
+      await exportPartsMsrpByOemList(exportFile, fromDate, toDate, groupByOem);
       setShowExportDialog(false);
     } catch (reason) {
       setError(errorText(reason));
@@ -186,7 +188,7 @@ export default function PartsMsrpPage() {
           {importing ? "Importing…" : "↑ Import Excel"}
           <input type="file" accept=".xlsx,.xlsm" onChange={onImport} disabled={importing} />
         </label>
-        <button className="outline-button" disabled={exporting} onClick={() => { setExportFile(null); setExportMode("all"); setShowExportDialog(true); }}>↓ Export Excel</button>
+        <button className="outline-button" disabled={exporting} onClick={() => { setExportFile(null); setExportMode("all"); setGroupByOem(true); setShowExportDialog(true); }}>↓ Export Excel</button>
       </div>
       <p className="parts-msrp-import-note">Import columns: OEM, MSRP, Date. OEM-list export accepts OEM or OEM Number.</p>
       {error && <div className="alert error-alert" role="alert">{error}</div>}
@@ -233,6 +235,10 @@ export default function PartsMsrpPage() {
               <input type="file" accept=".xlsx,.xlsm" onChange={(event) => setExportFile(event.target.files?.[0] ?? null)} />
               <small>Required column: OEM or OEM Number{exportFile ? ` · ${exportFile.name}` : ""}</small>
             </label>}
+            <label className="export-choice">
+              <input type="checkbox" checked={groupByOem} onChange={(event) => setGroupByOem(event.target.checked)} />
+              <span><strong>Group by OEM</strong><small>Keep one row per OEM and show one VIN fitment.</small></span>
+            </label>
           </div>
           <div className="modal-actions">
             <button type="button" className="outline-button" onClick={() => setShowExportDialog(false)}>Cancel</button>

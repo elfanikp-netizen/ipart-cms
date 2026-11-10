@@ -438,7 +438,7 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
 
 
 def export_catalog(kind: str, search: str, filters: str, sort_by: str, sort_dir: str,
-                  db: Session, user: PortalUser):
+                  db: Session, user: PortalUser, group_by_type: bool = True):
     spec = get_spec(kind)
     model = spec.model
     stmt = catalog_query(spec, search)
@@ -467,7 +467,10 @@ def export_catalog(kind: str, search: str, filters: str, sort_by: str, sort_dir:
     exported = 0
     for item in items:
         if item.oems:
-            for oem in sorted(item.oems, key=lambda value: value.oem_key):
+            oems = sorted(item.oems, key=lambda value: value.oem_key)
+            if group_by_type:
+                oems = oems[:1]
+            for oem in oems:
                 sheet.append([getattr(item, spec.value_field), oem.oem, oem.description or item.description])
                 exported += 1
         else:
@@ -477,7 +480,8 @@ def export_catalog(kind: str, search: str, filters: str, sort_by: str, sort_dir:
     return excel_response(workbook, f"{kind}.xlsx")
 
 
-def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Session, user: PortalUser):
+def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Session, user: PortalUser,
+                           group_by_type: bool = True):
     spec = get_spec(kind)
     list_type = list_type.strip().casefold()
     if list_type not in {"oem", "partslink", "interchange"}:
@@ -532,6 +536,8 @@ def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Sess
         if source_is_oem else [list_type.upper(), target_label, "OEM", "Description"]
     )
     exported = 0
+    seen_type_keys: set[str] = set()
+    seen_missing_keys: set[str] = set()
     for uploaded_number, number_key in requested:
         source_item = source_items_by_key.get(number_key)
         if source_is_oem:
@@ -551,12 +557,18 @@ def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Sess
         if target_catalogs:
             target_catalogs.sort(key=lambda value: getattr(value, f"{spec.value_field}_key"))
             for target_item in target_catalogs:
+                type_key = getattr(target_item, f"{spec.value_field}_key")
+                if group_by_type and type_key in seen_type_keys:
+                    continue
+                seen_type_keys.add(type_key)
                 linked_oems = sorted(
                     [oem for oem in oems if target_item in getattr(oem, target_relationship)],
                     key=lambda value: value.oem_key,
                 )
                 if source_is_oem:
                     linked_oems = oems
+                if group_by_type:
+                    linked_oems = linked_oems[:1]
                 for oem in linked_oems or [None]:
                     row = [getattr(target_item, spec.value_field), oem.oem if oem else None,
                            (oem.description if oem else "") or target_item.description]
@@ -565,9 +577,17 @@ def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Sess
                     sheet.append(row)
                     exported += 1
         elif not source_is_oem:
+            missing_key = f"{list_type}:{number_key}"
+            if group_by_type and missing_key in seen_missing_keys:
+                continue
+            seen_missing_keys.add(missing_key)
             sheet.append([uploaded_number, None, None, None])
             exported += 1
         else:
+            missing_key = f"oem:{number_key}"
+            if group_by_type and missing_key in seen_missing_keys:
+                continue
+            seen_missing_keys.add(missing_key)
             sheet.append([None, uploaded_number, None])
             exported += 1
     log_activity(db, user, f"export_{kind}_by_list", f"exported {exported} mappings from a {list_type} list")
@@ -674,38 +694,44 @@ def export_partslink_interchange(
 
 @router.get("/partslinks/export")
 def export_partslinks(search: str = "", filters: str = "", sort_by: str = "", sort_dir: str = "asc",
+                      group_by_type: bool = True,
                       db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    return export_catalog("partslinks", search, filters, sort_by, sort_dir, db, user)
+    return export_catalog("partslinks", search, filters, sort_by, sort_dir, db, user, group_by_type)
 
 
 @router.get("/interchanges/export")
 def export_interchanges(search: str = "", filters: str = "", sort_by: str = "", sort_dir: str = "asc",
+                        group_by_type: bool = True,
                         db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    return export_catalog("interchanges", search, filters, sort_by, sort_dir, db, user)
+    return export_catalog("interchanges", search, filters, sort_by, sort_dir, db, user, group_by_type)
 
 
 @router.post("/partslinks/export-by-oem")
 def export_partslinks_by_oem(file: UploadFile = File(...), list_type: str = Form("oem"),
+                             group_by_type: bool = Form(True),
                              db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    return export_catalog_by_list("partslinks", file, list_type, db, user)
+    return export_catalog_by_list("partslinks", file, list_type, db, user, group_by_type)
 
 
 @router.post("/partslinks/export-by-list")
 def export_partslinks_by_list(file: UploadFile = File(...), list_type: str = Form("oem"),
+                              group_by_type: bool = Form(True),
                               db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    return export_catalog_by_list("partslinks", file, list_type, db, user)
+    return export_catalog_by_list("partslinks", file, list_type, db, user, group_by_type)
 
 
 @router.post("/interchanges/export-by-oem")
 def export_interchanges_by_oem(file: UploadFile = File(...), list_type: str = Form("oem"),
+                               group_by_type: bool = Form(True),
                                db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    return export_catalog_by_list("interchanges", file, list_type, db, user)
+    return export_catalog_by_list("interchanges", file, list_type, db, user, group_by_type)
 
 
 @router.post("/interchanges/export-by-list")
 def export_interchanges_by_list(file: UploadFile = File(...), list_type: str = Form("oem"),
+                                group_by_type: bool = Form(True),
                                 db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
-    return export_catalog_by_list("interchanges", file, list_type, db, user)
+    return export_catalog_by_list("interchanges", file, list_type, db, user, group_by_type)
 
 
 @router.post("/partslinks/import")

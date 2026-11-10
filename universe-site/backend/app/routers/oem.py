@@ -284,6 +284,7 @@ def export_oems(
     filters: str = "",
     sort_by: str = "",
     sort_dir: str = "asc",
+    group_by_type: bool = True,
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
 ):
@@ -324,13 +325,18 @@ def export_oems(
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("OEM")
     sheet.append(["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"])
+    exported = 0
     for item in items:
-        for vin_item in sorted(item.vins, key=lambda value: value.vin_key) or [None]:
+        vins = sorted(item.vins, key=lambda value: value.vin_key) or [None]
+        if group_by_type:
+            vins = vins[:1]
+        for vin_item in vins:
             vehicle = vin_item.vehicle if vin_item else None
             sheet.append([item.oem, vin_item.vin if vin_item else None,
                           vehicle.year if vehicle else None, vehicle.make if vehicle else None,
                           vehicle.model if vehicle else None, item.description, item.notes])
-    log_activity(db, user, "export_oems", f"exported {len(items)} OEM records")
+            exported += 1
+    log_activity(db, user, "export_oems", f"exported {exported} OEM rows")
     return excel_response(workbook, "oems.xlsx")
 
 
@@ -340,6 +346,7 @@ def export_oems_by_list(
     list_type: str = Form("oem"),
     db: Session = Depends(get_db),
     user: PortalUser = Depends(get_current_user),
+    group_by_type: bool = Form(True),
 ):
     list_type = list_type.strip().casefold()
     if list_type not in {"oem", "partslink", "interchange"}:
@@ -395,6 +402,8 @@ def export_oems_by_list(
     base_headers = ["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"]
     sheet.append(base_headers if list_type == "oem" else [list_type.upper(), *base_headers])
     exported_count = 0
+    seen_oem_keys: set[str] = set()
+    seen_missing_keys: set[str] = set()
     for uploaded_number, number_key, vin_key in requested_rows:
         if list_type == "oem":
             item = items_by_key.get(number_key)
@@ -404,15 +413,23 @@ def export_oems_by_list(
             matching_oems = sorted(source_item.oems, key=lambda value: value.oem_key) if source_item else []
 
         if not matching_oems:
+            if group_by_type and number_key in seen_missing_keys:
+                continue
+            seen_missing_keys.add(number_key)
             row = [uploaded_number, None, None, None, None, None, None]
             sheet.append(row if list_type == "oem" else [uploaded_number, *row])
             exported_count += 1
             continue
 
         for item in matching_oems:
+            if group_by_type and item.oem_key in seen_oem_keys:
+                continue
+            seen_oem_keys.add(item.oem_key)
             vins = sorted(item.vins, key=lambda value: value.vin_key)
             if vin_key is not None:
                 vins = [value for value in vins if value.vin_key == vin_key]
+            if group_by_type:
+                vins = vins[:1]
             if vins:
                 for vin_item in vins:
                     vehicle = vin_item.vehicle

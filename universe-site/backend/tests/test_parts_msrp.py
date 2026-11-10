@@ -28,10 +28,26 @@ from app.routers.parts_msrp import (
     import_parts_msrp,
     list_parts_msrp,
     parse_msrp,
+    parts_msrp_export_rows,
 )
 
 
 class PartsMsrpTests(unittest.TestCase):
+    def test_grouped_export_keeps_one_oem_snapshot_and_one_fitment(self):
+        items = [
+            {"oem": "OEM-123", "fitments": ["VIN1", "VIN2"], "msrp": "10"},
+            {"oem": "oem-123", "fitments": ["VIN1", "VIN2"], "msrp": "9"},
+            {"oem": "OEM-456", "fitments": ["VIN3"], "msrp": "8"},
+        ]
+
+        grouped = parts_msrp_export_rows(items, True)
+        expanded = parts_msrp_export_rows(items, False)
+
+        self.assertEqual([item["oem"] for item in grouped], ["OEM-123", "OEM-456"])
+        self.assertEqual(grouped[0]["fitments"], ["VIN1"])
+        self.assertEqual(len(expanded), 3)
+        self.assertEqual(expanded[0]["fitments"], ["VIN1", "VIN2"])
+
     def test_selected_vendor_qualifies_oem_but_all_vendors_are_ranked(self):
         crawl_date = datetime(2026, 10, 31, 19, 19, 29, tzinfo=timezone.utc)
         records = [

@@ -112,6 +112,51 @@ class MasterDataExportTests(unittest.TestCase):
             "P-100", "OEM-1", "1FM5K8", 2020, "Ford", "Explorer", "Headlamp", None,
         ))
 
+    def test_oem_list_export_groups_by_oem_by_default_and_can_expand_vins(self):
+        vins = [
+            SimpleNamespace(vin="VIN-1", vin_key="vin-1", vehicle=SimpleNamespace(year=2020, make="Ford", model="Focus")),
+            SimpleNamespace(vin="VIN-2", vin_key="vin-2", vehicle=SimpleNamespace(year=2021, make="Ford", model="Escape")),
+        ]
+        oem = SimpleNamespace(oem="OEM-1", oem_key="oem-1", description="Part", notes="", vins=vins)
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [oem]
+        user = SimpleNamespace(id=1)
+
+        with patch("app.routers.oem.log_activity"):
+            grouped = export_oems_by_list(
+                upload_workbook(["OEM"], ["OEM-1"]), "oem", session, user,
+            )
+            expanded = export_oems_by_list(
+                upload_workbook(["OEM"], ["OEM-1"]), "oem", session, user,
+                group_by_type=False,
+            )
+
+        self.assertEqual(len(response_rows(grouped)), 2)
+        self.assertEqual(len(response_rows(expanded)), 3)
+
+    def test_catalog_list_export_groups_by_catalog_type_and_can_expand_mappings(self):
+        target = SimpleNamespace(partslink="P-100", partslink_key="p-100", description="Catalog description")
+        oems = [
+            SimpleNamespace(oem="OEM-1", oem_key="oem-1", description="OEM one", partslinks=[target]),
+            SimpleNamespace(oem="OEM-2", oem_key="oem-2", description="OEM two", partslinks=[target]),
+        ]
+        target.oems = oems
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [target]
+        user = SimpleNamespace(id=1)
+
+        with patch("app.routers.catalogs.log_activity"):
+            grouped = export_catalog_by_list(
+                "partslinks", upload_workbook(["Partslink"], ["P-100"]), "partslink", session, user,
+            )
+            expanded = export_catalog_by_list(
+                "partslinks", upload_workbook(["Partslink"], ["P-100"]), "partslink", session, user,
+                group_by_type=False,
+            )
+
+        self.assertEqual(len(response_rows(grouped)), 2)
+        self.assertEqual(len(response_rows(expanded)), 3)
+
 
 if __name__ == "__main__":
     unittest.main()
