@@ -9,6 +9,7 @@ from zipfile import is_zipfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from openpyxl import load_workbook
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -53,13 +54,47 @@ def run_artifact_path(run: Run, name: str) -> Path | None:
     return None
 
 
+def has_unfinished_google_vin_rows(output_path: Path | None) -> bool:
+    if output_path is None:
+        return False
+    try:
+        workbook = load_workbook(output_path, read_only=True, data_only=True)
+        try:
+            worksheet = workbook.active
+            header = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), ())
+            columns = {str(name).strip(): index for index, name in enumerate(header) if name is not None}
+            required = ("Year", "Make", "Model")
+            if any(name not in columns for name in required):
+                return False
+            status_index = columns.get("VIN_Status")
+            completed_statuses = {"found", "not_found"}
+            for row in worksheet.iter_rows(min_row=2, values_only=True):
+                vehicle = (row[columns[name]] if columns[name] < len(row) else None for name in required)
+                if any(value is None or not str(value).strip() for value in vehicle):
+                    continue
+                status = row[status_index] if status_index is not None and status_index < len(row) else None
+                if str(status).strip() not in completed_statuses:
+                    return True
+            return False
+        finally:
+            workbook.close()
+    except Exception:
+        return False
+
+
 def to_out(run: Run, user: User | None = None) -> RunOut:
     spec = get_crawler(run.crawler_id)
     params = json.loads(run.params or "{}")
-    resumable_status = run.status in {"stopped", "failed"}
+    output_path = run_artifact_path(run, "output")
+    incomplete_google_vin = (
+        run.status == "success"
+        and run.crawler_id == "vin-lookup"
+        and params.get("site") == "google"
+        and has_unfinished_google_vin_rows(output_path)
+    )
+    resumable_status = run.status in {"stopped", "failed"} or incomplete_google_vin
     out = RunOut.model_validate(run)
     out.crawler_name = spec.name if spec else run.crawler_id
-    output_path = run_artifact_path(run, "output")
     out.has_output = output_path is not None
     out.can_continue = (
         resumable_status
@@ -427,13 +462,20 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     if run is None:
         raise HTTPException(404, "Run not found")
     require_run_owner_or_admin(run, user)
-    if run.status not in {"stopped", "failed"}:
-        raise HTTPException(409, "Only stopped or failed runs can be continued")
+    params = json.loads(run.params or "{}")
+    output_path = run_artifact_path(run, "output")
+    incomplete_google_vin = (
+        run.status == "success"
+        and run.crawler_id == "vin-lookup"
+        and params.get("site") == "google"
+        and has_unfinished_google_vin_rows(output_path)
+    )
+    if run.status not in {"stopped", "failed"} and not incomplete_google_vin:
+        raise HTTPException(409, "Only stopped, failed, or incomplete Google VIN runs can be continued")
     if run_id in runner.active_run_ids():
         raise HTTPException(409, "The stopped crawler process is still shutting down")
 
     spec = get_crawler(run.crawler_id)
-    params = json.loads(run.params or "{}")
     if spec is None or not spec.resolve_script(params.get("site"), params.get("input_mode")).exists():
         raise HTTPException(400, "Crawler script is unavailable")
     if not spec.supports_resume:
@@ -444,7 +486,6 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     input_path = run_artifact_path(run, "input")
     if input_path is None:
         raise HTTPException(409, "The original input workbook is unavailable; this run cannot be continued")
-    output_path = run_artifact_path(run, "output")
     if spec.supports_resume:
         if spec.resume_requires_output and output_path is None:
             raise HTTPException(409, "No partial output exists to resume; start a new run instead")
@@ -459,6 +500,8 @@ def continue_run(run_id: int, db: Session = Depends(get_db), user: User = Depend
     run.returncode = None
     run.pid = None
     run.waiting_for_human = False
+    run.progress_done = None
+    run.progress_total = None
     run.finished_at = None
     db.commit()
     db.refresh(run)

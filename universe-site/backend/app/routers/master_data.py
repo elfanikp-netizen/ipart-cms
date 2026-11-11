@@ -7,14 +7,14 @@ import re
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import String, cast, func, or_, select, tuple_
+from sqlalchemy import String, cast, exists, func, or_, select, tuple_, update
 from sqlalchemy.sql.sqltypes import String as StringType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
-from ..models import Vehicle, Vin
+from ..models import OEM_VIN, CccMarketRecord, Oem, Vehicle, Vin
 from ..schemas import ImportOut, VehicleCreate, VehicleOut, VehicleUpdate, VinCreate, VinOut, VinUpdate
 
 router = APIRouter(prefix="/api/universe", tags=["master data"])
@@ -32,6 +32,36 @@ def normalize_text(value: object, label: str) -> str:
 
 def normalized_key(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def ccc_pair_exists(db: Session, oem: str, vin: str) -> bool:
+    oem_key = normalized_key(oem)
+    vin_key = normalized_key(vin)
+    if db.bind.dialect.name == "postgresql":
+        oem_column = func.lower(func.regexp_replace(func.btrim(CccMarketRecord.oem), r"\s+", " ", "g"))
+        vin_column = func.lower(func.regexp_replace(func.btrim(CccMarketRecord.vin), r"\s+", " ", "g"))
+    else:
+        oem_column = func.lower(func.trim(CccMarketRecord.oem))
+        vin_column = func.lower(func.trim(CccMarketRecord.vin))
+    return bool(db.scalar(select(exists().where(oem_column == oem_key, vin_column == vin_key))))
+
+
+def refresh_oem_vin_validity(db: Session, oem_id: int, vin_id: int, oem: str, vin: str) -> None:
+    db.execute(update(OEM_VIN).where(
+        OEM_VIN.c.id_oem == oem_id,
+        OEM_VIN.c.id_vin == vin_id,
+    ).values(is_valid=ccc_pair_exists(db, oem, vin)))
+
+
+def mark_fitments_valid_for_pairs(db: Session, pairs: set[tuple[str, str]]) -> None:
+    if not pairs:
+        return
+    links = select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin).select_from(
+        OEM_VIN.join(Oem, Oem.id == OEM_VIN.c.id_oem).join(Vin, Vin.id == OEM_VIN.c.id_vin)
+    ).where(tuple_(Oem.oem_key, Vin.vin_key).in_(sorted(pairs)))
+    db.execute(update(OEM_VIN).where(
+        tuple_(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin).in_(links)
+    ).values(is_valid=True))
 
 
 def apply_column_filters(
@@ -443,6 +473,9 @@ def update_vin(vin_id: int, payload: VinUpdate, db: Session = Depends(get_db), u
         raise HTTPException(409, "This VIN already exists for the selected vehicle")
     item.id_vehicle, item.vin, item.vin_key = vehicle.id, vin, vin
     item.notes, item.updated_by = payload.notes.strip(), user.id
+    db.flush()
+    for linked_oem in item.oems:
+        refresh_oem_vin_validity(db, linked_oem.id, item.id, linked_oem.oem, item.vin)
     try:
         db.commit()
     except IntegrityError as error:
@@ -586,6 +619,9 @@ def import_vins(file: UploadFile = File(...), db: Session = Depends(get_db), use
                     if existing:
                         changed = existing.vin != vin
                         existing.vin, existing.vin_key, existing.updated_by = vin, vin, user.id
+                        db.flush()
+                        for linked_oem in existing.oems:
+                            refresh_oem_vin_validity(db, linked_oem.id, existing.id, linked_oem.oem, vin)
                         result.updated += int(changed)
                         result.skipped += int(not changed)
                     else:

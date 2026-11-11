@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import (Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Table, Text, UniqueConstraint, func)
+from sqlalchemy import (Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Table, Text, UniqueConstraint, false, func)
 from sqlalchemy.orm import relationship
 
 from .db import Base, engine
@@ -18,6 +18,7 @@ OEM_VIN = Table(
     Base.metadata,
     Column("id_oem", ForeignKey(f"{OEM_TABLE}.id", ondelete="CASCADE"), primary_key=True),
     Column("id_vin", ForeignKey(f"{VIN_TABLE}.id", ondelete="CASCADE"), primary_key=True),
+    Column("is_valid", Boolean, nullable=False, default=False, server_default=false()),
     schema=APP_SCHEMA,
 )
 OEM_PARTSLINK = Table(

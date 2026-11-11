@@ -518,7 +518,7 @@ export interface Oem {
   oem: string;
   description: string;
   notes: string;
-  vins: { id: number; vin: string; year: number; make: string; model: string }[];
+  vins: { id: number; vin: string; is_valid: boolean; year: number; make: string; model: string }[];
   partslinks: string[];
   interchanges: string[];
   created_at: string;
@@ -555,7 +555,22 @@ export async function downloadOemsByList(file: File, listType: ExportListType = 
   form.append("file", file);
   form.append("list_type", listType);
   form.append("group_by_type", String(groupByType));
-  const response = await client.post<Blob>("/api/universe/oems/export-by-list", form, { responseType: "blob" });
+  let response;
+  try {
+    response = await client.post<Blob>("/api/universe/oems/export-by-list", form, { responseType: "blob" });
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+      const body = await error.response.data.text();
+      let detail: string | undefined;
+      try {
+        detail = (JSON.parse(body) as { detail?: string }).detail;
+      } catch {
+        detail = undefined;
+      }
+      if (detail) throw new Error(detail);
+    }
+    throw error;
+  }
   saveBlob(response.data, `oems-by-${listType}.xlsx`);
 }
 

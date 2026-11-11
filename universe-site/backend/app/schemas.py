@@ -62,6 +62,7 @@ class VinOut(VinFields):
 class OemVinOut(BaseModel):
     id: int
     vin: str
+    is_valid: bool
     year: int
     make: str
     model: str

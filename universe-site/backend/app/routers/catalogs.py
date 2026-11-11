@@ -19,6 +19,7 @@ from .master_data import (
     normalize_text,
     normalize_vin,
     normalized_key,
+    refresh_oem_vin_validity,
     normalize_excel_header,
     resolve_vehicle,
     validate_year,
@@ -339,6 +340,8 @@ def import_catalog(kind: str, file: UploadFile, db: Session, user: PortalUser):
         if vin_item not in oem_item.vins:
             oem_item.vins.append(vin_item)
             result["fitments_created"] += 1
+        db.flush()
+        refresh_oem_vin_validity(db, oem_item.id, vin_item.id, oem_item.oem, vin_item.vin)
 
     try:
         for row_number, row in enumerate(rows, start=2):

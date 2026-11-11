@@ -1,6 +1,7 @@
 import asyncio
 from io import BytesIO
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,7 +13,7 @@ from app.routers.catalogs import (
     catalog_pair_export_row,
     export_catalog_by_list,
 )
-from app.routers.oem import export_oems_by_list
+from app.routers.oem import export_oems_by_list, row_out
 
 
 def upload_workbook(headers, values):
@@ -90,9 +91,12 @@ class MasterDataExportTests(unittest.TestCase):
 
     def test_oem_export_can_select_partslink_list_and_expand_vin_fitment(self):
         vehicle = SimpleNamespace(year=2020, make="Ford", model="Explorer")
-        vin = SimpleNamespace(vin="1FM5K8", vin_key="1fm5k8", vehicle=vehicle)
+        vin = SimpleNamespace(id=1, vin="1FM5K8", vin_key="1fm5k8", vehicle=vehicle)
+        partslink = SimpleNamespace(partslink="P-100")
+        interchange = SimpleNamespace(interchange="I-200")
         oem = SimpleNamespace(
-            oem="OEM-1", oem_key="oem-1", description="Headlamp", notes="", vins=[vin],
+            id=1, oem="OEM-1", oem_key="oem-1", description="Headlamp", notes="", vins=[vin],
+            partslinks=[partslink], interchanges=[interchange],
         )
         source = SimpleNamespace(partslink="P-100", partslink_key="p-100", oems=[oem])
         session = MagicMock()
@@ -106,18 +110,23 @@ class MasterDataExportTests(unittest.TestCase):
 
         rows = response_rows(response)
         self.assertEqual(rows[0], (
-            "PARTSLINK", "OEM", "VIN", "Year", "Make", "Model", "Description", "Notes",
+            "PARTSLINK", "OEM", "VIN", "Year", "Make", "Model", "Partslink", "Interchange",
+            "Is Valid", "Description", "Notes",
         ))
         self.assertEqual(rows[1], (
-            "P-100", "OEM-1", "1FM5K8", 2020, "Ford", "Explorer", "Headlamp", None,
+            "P-100", "OEM-1", "1FM5K8", 2020, "Ford", "Explorer", "P-100", "I-200",
+            False, "Headlamp", None,
         ))
 
     def test_oem_list_export_groups_by_oem_by_default_and_can_expand_vins(self):
         vins = [
-            SimpleNamespace(vin="VIN-1", vin_key="vin-1", vehicle=SimpleNamespace(year=2020, make="Ford", model="Focus")),
-            SimpleNamespace(vin="VIN-2", vin_key="vin-2", vehicle=SimpleNamespace(year=2021, make="Ford", model="Escape")),
+            SimpleNamespace(id=1, vin="VIN-1", vin_key="vin-1", vehicle=SimpleNamespace(year=2020, make="Ford", model="Focus")),
+            SimpleNamespace(id=2, vin="VIN-2", vin_key="vin-2", vehicle=SimpleNamespace(year=2021, make="Ford", model="Escape")),
         ]
-        oem = SimpleNamespace(oem="OEM-1", oem_key="oem-1", description="Part", notes="", vins=vins)
+        oem = SimpleNamespace(
+            id=1, oem="OEM-1", oem_key="oem-1", description="Part", notes="", vins=vins,
+            partslinks=[], interchanges=[],
+        )
         session = MagicMock()
         session.scalars.return_value.all.return_value = [oem]
         user = SimpleNamespace(id=1)
@@ -133,6 +142,41 @@ class MasterDataExportTests(unittest.TestCase):
 
         self.assertEqual(len(response_rows(grouped)), 2)
         self.assertEqual(len(response_rows(expanded)), 3)
+
+    def test_grouped_oem_list_export_prefers_valid_vin_fitment(self):
+        vins = [
+            SimpleNamespace(vin="VIN-1", vin_key="vin-1", id=1, vehicle=SimpleNamespace(year=2020, make="Ford", model="Focus")),
+            SimpleNamespace(vin="VIN-2", vin_key="vin-2", id=2, vehicle=SimpleNamespace(year=2021, make="Ford", model="Escape")),
+        ]
+        oem = SimpleNamespace(
+            id=1, oem="OEM-1", oem_key="oem-1", description="Part", notes="", vins=vins,
+            partslinks=[], interchanges=[],
+        )
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [oem]
+
+        with patch("app.routers.oem.load_fitment_validity", return_value={(1, 1): False, (1, 2): True}), patch(
+            "app.routers.oem.log_activity"
+        ):
+            response = export_oems_by_list(
+                upload_workbook(["OEM"], ["OEM-1"]), "oem", session, SimpleNamespace(id=1),
+            )
+
+        rows = response_rows(response)
+        self.assertEqual(rows[1][1], "VIN-2")
+        self.assertIs(rows[1][7], True)
+
+    def test_oem_api_payload_includes_per_fitment_validity(self):
+        vin = SimpleNamespace(id=3, vin="VIN-3", vin_key="vin-3", vehicle=SimpleNamespace(year=2020, make="Ford", model="Focus"))
+        now = datetime.now(timezone.utc)
+        oem = SimpleNamespace(
+            id=4, oem="OEM-4", description="Part", notes="", vins=[vin],
+            partslinks=[], interchanges=[], created_at=now, updated_at=now,
+        )
+
+        result = row_out(oem, {(4, 3): True})
+
+        self.assertTrue(result.vins[0].is_valid)
 
     def test_catalog_list_export_groups_by_catalog_type_and_can_expand_mappings(self):
         target = SimpleNamespace(partslink="P-100", partslink_key="p-100", description="Catalog description")

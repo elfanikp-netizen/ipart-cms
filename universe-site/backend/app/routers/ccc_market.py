@@ -19,7 +19,7 @@ from ..auth import PortalUser, get_current_user, get_db
 from ..audit import log_activity
 from ..models import CccMarketRecord
 from ..schemas import CccMarketPageOut, CccMarketRecordOut
-from .master_data import excel_indexes, get_cell, normalize_excel_header, open_excel
+from .master_data import excel_indexes, get_cell, mark_fitments_valid_for_pairs, normalize_excel_header, normalized_key, open_excel
 
 router = APIRouter(prefix="/api/universe/market/ccc", tags=["CCC Market data"])
 
@@ -1206,6 +1206,7 @@ def import_ccc_market_records(
     workbook, rows, headers = open_excel(file)
     created = updated = skipped = 0
     errors: list[str] = []
+    imported_pairs: set[tuple[str, str]] = set()
     try:
         indexes = excel_indexes(headers, ("VIN", "OEM", "Status", "date_time", "market_data"))
         for row_number, row in enumerate(rows, start=2):
@@ -1251,10 +1252,12 @@ def import_ccc_market_records(
                             updated += len(stored_entries)
                         else:
                             created += len(stored_entries)
+                imported_pairs.add((normalized_key(oem), normalized_key(vin)))
             except (ValueError, TypeError) as error:
                 skipped += 1
                 if len(errors) < 50:
                     errors.append(f"Row {row_number}: {error}")
+        mark_fitments_valid_for_pairs(db, imported_pairs)
         db.commit()
     except IntegrityError as error:
         db.rollback()

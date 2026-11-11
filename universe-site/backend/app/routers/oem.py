@@ -20,6 +20,7 @@ from .master_data import (
     normalize_excel_header,
     normalize_vin,
     normalized_key,
+    refresh_oem_vin_validity,
     resolve_vehicle,
     validate_year,
 )
@@ -29,13 +30,14 @@ DEFAULT_PAGE_SIZE = 10
 MAX_PAGE_SIZE = 100
 
 
-def row_out(item: Oem) -> OemOut:
+def row_out(item: Oem, fitment_validity: dict[tuple[int, int], bool] | None = None) -> OemOut:
     return OemOut(
         id=item.id,
         oem=item.oem,
         description=item.description,
         notes=item.notes,
-        vins=[OemVinOut(id=vin.id, vin=vin.vin, year=vin.vehicle.year,
+        vins=[OemVinOut(id=vin.id, vin=vin.vin, is_valid=(fitment_validity or {}).get((item.id, vin.id), False),
+                year=vin.vehicle.year,
                         make=vin.vehicle.make, model=vin.vehicle.model)
               for vin in sorted(item.vins, key=lambda value: value.vin_key)],
         partslinks=sorted(part.partslink for part in item.partslinks),
@@ -43,6 +45,15 @@ def row_out(item: Oem) -> OemOut:
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
+
+
+def load_fitment_validity(db: Session, oem_ids: list[int]) -> dict[tuple[int, int], bool]:
+    if not oem_ids:
+        return {}
+    rows = db.execute(select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin, OEM_VIN.c.is_valid).where(
+        OEM_VIN.c.id_oem.in_(oem_ids)
+    )).all()
+    return {(oem_id, vin_id): valid for oem_id, vin_id, valid in rows}
 
 
 def query_oems(search: str):
@@ -110,6 +121,9 @@ def create_oem(
     linked = vin_item is not None and vin_item not in item.vins
     if linked:
         item.vins.append(vin_item)
+    if vin_item is not None:
+        db.flush()
+        refresh_oem_vin_validity(db, item.id, vin_item.id, item.oem, vin_item.vin)
     try:
         db.commit()
     except IntegrityError as error:
@@ -120,7 +134,10 @@ def create_oem(
     if vin_item is not None:
         detail += f" for VIN {vin_item.vin}"
     log_activity(db, user, "create_oem", detail)
-    return row_out(item)
+    validity_rows = db.execute(select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin, OEM_VIN.c.is_valid).where(
+        OEM_VIN.c.id_oem == item.id
+    )).all()
+    return row_out(item, {(oem_id, vin_id): valid for oem_id, vin_id, valid in validity_rows})
 
 
 @router.put("/{oem_id}", response_model=OemOut)
@@ -154,6 +171,9 @@ def update_oem(
     item.description = payload.description.strip()
     item.notes = payload.notes.strip()
     item.updated_by = user.id
+    db.flush()
+    for linked_vin in item.vins:
+        refresh_oem_vin_validity(db, item.id, linked_vin.id, item.oem, linked_vin.vin)
     try:
         db.commit()
     except IntegrityError as error:
@@ -161,7 +181,10 @@ def update_oem(
         raise HTTPException(409, "This OEM number already exists") from error
     item = get_oem_or_404(db, item.id)
     log_activity(db, user, "update_oem", f"updated OEM {item.oem}")
-    return row_out(item)
+    validity_rows = db.execute(select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin, OEM_VIN.c.is_valid).where(
+        OEM_VIN.c.id_oem == item.id
+    )).all()
+    return row_out(item, {(oem_id, vin_id): valid for oem_id, vin_id, valid in validity_rows})
 
 
 @router.delete("/{oem_id}", status_code=204)
@@ -269,8 +292,12 @@ def list_oems(
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+    validity_rows = db.execute(select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin, OEM_VIN.c.is_valid).where(
+        OEM_VIN.c.id_oem.in_([item.id for item in items])
+    )).all() if items else []
+    fitment_validity = {(oem_id, vin_id): valid for oem_id, vin_id, valid in validity_rows}
     return {
-        "items": [row_out(item) for item in items],
+        "items": [row_out(item, fitment_validity) for item in items],
         "page": page,
         "page_size": page_size,
         "total": total,
@@ -321,20 +348,37 @@ def export_oems(
     }
     stmt = apply_column_filters(stmt, filters, columns, empty_conditions, value_conditions)
     stmt = apply_column_sort(stmt, sort_by, sort_dir, columns, (Oem.updated_at.desc(), Oem.id.desc()))
-    items = db.scalars(stmt.options(selectinload(Oem.vins).joinedload(Vin.vehicle))).all()
+    items = db.scalars(stmt.options(
+        selectinload(Oem.vins).joinedload(Vin.vehicle),
+        selectinload(Oem.partslinks),
+        selectinload(Oem.interchanges),
+    )).all()
+    fitment_validity = load_fitment_validity(db, [item.id for item in items])
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("OEM")
-    sheet.append(["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"])
+    sheet.append(["OEM", "VIN", "Year", "Make", "Model", "Partslink", "Interchange", "Is Valid", "Description", "Notes"])
     exported = 0
     for item in items:
-        vins = sorted(item.vins, key=lambda value: value.vin_key) or [None]
+        vins = sorted(
+            item.vins,
+            key=lambda value: (not fitment_validity.get((item.id, value.id), False), value.vin_key),
+        ) or [None]
         if group_by_type:
             vins = vins[:1]
         for vin_item in vins:
             vehicle = vin_item.vehicle if vin_item else None
-            sheet.append([item.oem, vin_item.vin if vin_item else None,
-                          vehicle.year if vehicle else None, vehicle.make if vehicle else None,
-                          vehicle.model if vehicle else None, item.description, item.notes])
+            sheet.append([
+                item.oem,
+                vin_item.vin if vin_item else None,
+                vehicle.year if vehicle else None,
+                vehicle.make if vehicle else None,
+                vehicle.model if vehicle else None,
+                ", ".join(sorted(part.partslink for part in item.partslinks)),
+                ", ".join(sorted(group.interchange for group in item.interchanges)),
+                fitment_validity.get((item.id, vin_item.id)) if vin_item else None,
+                item.description,
+                item.notes,
+            ])
             exported += 1
     log_activity(db, user, "export_oems", f"exported {exported} OEM rows")
     return excel_response(workbook, "oems.xlsx")
@@ -384,7 +428,11 @@ def export_oems_by_list(
             Oem.vins.any(Vin.vin_key == vin_key) & (Oem.oem_key == number_key)
             for number_key, vin_key in keys if vin_key is not None
         )
-        stmt = select(Oem).options(selectinload(Oem.vins).joinedload(Vin.vehicle))
+        stmt = select(Oem).options(
+            selectinload(Oem.vins).joinedload(Vin.vehicle),
+            selectinload(Oem.partslinks),
+            selectinload(Oem.interchanges),
+        )
         stmt = stmt.where(or_(*conditions)) if conditions else stmt.where(False)
         items = db.scalars(stmt.order_by(Oem.oem_key)).all()
         items_by_key = {item.oem_key: item for item in items}
@@ -393,13 +441,23 @@ def export_oems_by_list(
         source_key = f"{list_type}_key"
         source_items = db.scalars(
             select(source_model).where(getattr(source_model, source_key).in_(keys_only))
-            .options(selectinload(source_model.oems).selectinload(Oem.vins).joinedload(Vin.vehicle))
+            .options(
+                selectinload(source_model.oems).selectinload(Oem.vins).joinedload(Vin.vehicle),
+                selectinload(source_model.oems).selectinload(Oem.partslinks),
+                selectinload(source_model.oems).selectinload(Oem.interchanges),
+            )
         ).all() if keys_only else []
         items_by_key = {getattr(item, source_key): item for item in source_items}
 
+    if list_type == "oem":
+        related_oems = items
+    else:
+        related_oems = [oem for item in source_items for oem in item.oems]
+    fitment_validity = load_fitment_validity(db, list({item.id for item in related_oems}))
+
     output = Workbook(write_only=True)
     sheet = output.create_sheet("OEM")
-    base_headers = ["OEM", "VIN", "Year", "Make", "Model", "Description", "Notes"]
+    base_headers = ["OEM", "VIN", "Year", "Make", "Model", "Partslink", "Interchange", "Is Valid", "Description", "Notes"]
     sheet.append(base_headers if list_type == "oem" else [list_type.upper(), *base_headers])
     exported_count = 0
     seen_oem_keys: set[str] = set()
@@ -416,7 +474,7 @@ def export_oems_by_list(
             if group_by_type and number_key in seen_missing_keys:
                 continue
             seen_missing_keys.add(number_key)
-            row = [uploaded_number, None, None, None, None, None, None]
+            row = [uploaded_number, None, None, None, None, None, None, None, None, None]
             sheet.append(row if list_type == "oem" else [uploaded_number, *row])
             exported_count += 1
             continue
@@ -425,7 +483,10 @@ def export_oems_by_list(
             if group_by_type and item.oem_key in seen_oem_keys:
                 continue
             seen_oem_keys.add(item.oem_key)
-            vins = sorted(item.vins, key=lambda value: value.vin_key)
+            vins = sorted(
+                item.vins,
+                key=lambda value: (not fitment_validity.get((item.id, value.id), False), value.vin_key),
+            )
             if vin_key is not None:
                 vins = [value for value in vins if value.vin_key == vin_key]
             if group_by_type:
@@ -433,12 +494,22 @@ def export_oems_by_list(
             if vins:
                 for vin_item in vins:
                     vehicle = vin_item.vehicle
-                    row = [item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
-                           item.description, item.notes]
+                    row = [
+                        item.oem, vin_item.vin, vehicle.year, vehicle.make, vehicle.model,
+                        ", ".join(sorted(part.partslink for part in item.partslinks)),
+                        ", ".join(sorted(group.interchange for group in item.interchanges)),
+                        fitment_validity.get((item.id, vin_item.id), False),
+                        item.description, item.notes,
+                    ]
                     sheet.append(row if list_type == "oem" else [uploaded_number, *row])
                     exported_count += 1
             else:
-                row = [item.oem, vin_key, None, None, None, item.description, item.notes]
+                row = [
+                    item.oem, vin_key, None, None, None,
+                    ", ".join(sorted(part.partslink for part in item.partslinks)),
+                    ", ".join(sorted(group.interchange for group in item.interchanges)),
+                    None, item.description, item.notes,
+                ]
                 sheet.append(row if list_type == "oem" else [uploaded_number, *row])
                 exported_count += 1
     log_activity(db, user, "export_oems_by_list", f"exported {exported_count} OEM records from supplied {list_type} list")
@@ -527,6 +598,8 @@ def import_oems(
                     linked = vin_item not in existing.vins
                     if linked:
                         existing.vins.append(vin_item)
+                    db.flush()
+                    refresh_oem_vin_validity(db, existing.id, vin_item.id, existing.oem, vin_item.vin)
                     if not created:
                         changed = changed or linked
                         result.updated += int(changed)

@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, event, inspect, select, text, update
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import settings
@@ -247,6 +247,65 @@ def migrate_ccc_market_rows() -> None:
                 f"ALTER TABLE {table} ADD CONSTRAINT uq_ccc_market_oem_vin_date_index "
                 "UNIQUE (oem, vin, crawl_date, market_index)"
             ))
+
+
+def migrate_oem_vin_validity() -> None:
+    from .models import OEM_VIN, CccMarketRecord, Oem, Vin
+    from .routers.master_data import normalized_key
+
+    schema = "universe" if engine.dialect.name == "postgresql" else None
+    inspector = inspect(engine)
+    if "oem_vin" not in inspector.get_table_names(schema=schema):
+        return
+    columns = {column["name"] for column in inspector.get_columns("oem_vin", schema=schema)}
+    needs_backfill = "is_valid" not in columns
+    preparer = engine.dialect.identifier_preparer
+    table = f"{preparer.quote_schema(schema)}.{preparer.quote('oem_vin')}" if schema else preparer.quote("oem_vin")
+    with engine.begin() as connection:
+        if needs_backfill:
+            connection.execute(text(
+                f"ALTER TABLE {table} ADD COLUMN is_valid BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+        if not needs_backfill:
+            return
+        if engine.dialect.name == "postgresql":
+            connection.execute(text(f"""
+                WITH ccc_pairs AS (
+                    SELECT DISTINCT
+                        lower(regexp_replace(btrim(oem), '\\s+', ' ', 'g')) AS oem_key,
+                        lower(regexp_replace(btrim(vin), '\\s+', ' ', 'g')) AS vin_key
+                    FROM universe.ccc_market_data
+                ), valid_fitments AS (
+                    SELECT ov.id_oem, ov.id_vin
+                    FROM {table} AS ov
+                    JOIN universe.oem AS o ON o.id = ov.id_oem
+                    JOIN universe.vin AS v ON v.id = ov.id_vin
+                    JOIN ccc_pairs AS c
+                      ON c.oem_key = lower(regexp_replace(btrim(o.oem), '\\s+', ' ', 'g'))
+                     AND c.vin_key = lower(regexp_replace(btrim(v.vin), '\\s+', ' ', 'g'))
+                )
+                UPDATE {table} AS ov
+                SET is_valid = TRUE
+                FROM valid_fitments AS vf
+                WHERE ov.id_oem = vf.id_oem AND ov.id_vin = vf.id_vin
+            """))
+        else:
+            ccc_pairs = {
+                (normalized_key(oem), normalized_key(vin))
+                for oem, vin in connection.execute(select(CccMarketRecord.oem, CccMarketRecord.vin)).all()
+            }
+            links = connection.execute(
+                select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin, Oem.oem, Vin.vin)
+                .join(Oem, Oem.id == OEM_VIN.c.id_oem)
+                .join(Vin, Vin.id == OEM_VIN.c.id_vin)
+            ).all()
+            for id_oem, id_vin, oem, vin in links:
+                connection.execute(
+                    update(OEM_VIN).where(
+                        OEM_VIN.c.id_oem == id_oem,
+                        OEM_VIN.c.id_vin == id_vin,
+                    ).values(is_valid=(normalized_key(oem), normalized_key(vin)) in ccc_pairs)
+                )
 
 
 def migrate_user_app_access() -> None:

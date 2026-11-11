@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from . import models
 from .db import (Base, ensure_database_schema, ensure_partslink_interchange_view, engine,
-                 migrate_ccc_market_rows, migrate_oem_relationships,
+                 migrate_ccc_market_rows, migrate_oem_relationships, migrate_oem_vin_validity,
                  migrate_user_app_access, migrate_vin_uniqueness, prepare_oem_relationship_migration)
 from .routers import activity, catalogs, ccc_market, master_data, oem, parts_msrp
 
@@ -19,6 +19,7 @@ async def lifespan(_app: FastAPI):
     migrate_user_app_access()
     migrate_vin_uniqueness()
     migrate_ccc_market_rows()
+    migrate_oem_vin_validity()
     yield
 
 
