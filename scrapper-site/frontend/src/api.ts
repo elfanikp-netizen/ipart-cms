@@ -80,17 +80,18 @@ export const deleteCccScenario = (recordId: number) => client.delete(`/api/ccc-s
 
 // ---------------------------------------------------------------- crawlers & runs
 export const listCrawlers = () => client.get<Crawler[]>("/api/crawlers").then((r) => r.data);
-export function previewInput(crawlerId: string, file: File, site: string, column: string) {
+export function previewInput(crawlerId: string, file: File, site: string, column: string, searchAction = "vin_oem") {
   const form = new FormData();
   form.append("crawler_id", crawlerId);
   form.append("file", file);
   form.append("site", site);
   form.append("column", column);
+  form.append("search_action", searchAction);
   return client.post<InputPreview>("/api/input-preview", form).then((r) => r.data);
 }
-export function downloadCrawlerTemplate(crawlerId: string, site: string) {
+export function downloadCrawlerTemplate(crawlerId: string, site: string, searchAction = "vin_oem") {
   return client.get<Blob>(`/api/crawlers/${crawlerId}/template`, {
-    params: site ? { site } : undefined,
+    params: { site: site || undefined, search_action: searchAction },
     responseType: "blob",
   }).then((r) => r.data);
 }

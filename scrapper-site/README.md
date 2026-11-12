@@ -27,6 +27,16 @@ Vite.
 | Pacific Best | Pacific Best Parts | `C:\ELFANI\scrapper-pac` |
 | Brands (OEM Parts) | Acura, Audi, BMW, Chrysler, Ford, GMC, Honda, Hyundai, Infiniti, Kia, Lexus, Mazda, Nissan, Porsche, Subaru, Toyota, Volvo, VW | `C:\ELFANI\scrapper-brand\scrapper-*` |
 
+CCC Workflow offers two search actions: **By VIN & OEM** uses the existing
+`VIN`/`OEM` input, while **By VIN & PARTSLINK (Scenario)** accepts `VIN` and
+`PARTSLINK`. The scenario action derives the four-character Part Code from
+PARTSLINK characters 3-6, looks up its non-empty Scenario in
+`scrapping.ccc_scenarios`, and adds a `Scenario` column to the run's private
+input copy. Missing Part Codes and empty scenarios are reported during input
+preview. The result workbook keeps the supplied code in `Partslink` and writes
+the selected estimate Part Number in `OEM` and the Edit Properties Description
+in `Part Description`.
+
 Crawler definitions live in [backend/app/crawlers.py](backend/app/crawlers.py).
 Adding a crawler script means registering it there. VIN Lookup runs with the
 `scrapper-vins\.venv` environment and lets each run choose VinInspect, Google

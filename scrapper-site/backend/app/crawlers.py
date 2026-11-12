@@ -161,6 +161,8 @@ class CrawlerSpec:
         description = (params.get("description") or "").strip()
         if description and self.supports_description:
             args += ["--description", description]
+        if self.id == "ccc" and params.get("search_action") == "vin_partslink_scenario":
+            args += ["--search-action", "vin_partslink_scenario"]
         limit = int(params.get("limit") or 0)
         if limit > 0 and self.supports_limit:
             args += ["--limit", str(limit)]
@@ -268,7 +270,7 @@ def _registry() -> dict[str, CrawlerSpec]:
     specs: list[CrawlerSpec] = [
         CrawlerSpec(
             id="ccc",
-            name="CCC Workfile",
+            name="CCC Workflow",
             group="CCC",
             script=settings.ccc_dir / "crawler.py",
             cwd=settings.ccc_dir,
@@ -281,19 +283,19 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_description=True,
             description_default="A/M: CAPA",
             sites=(SiteVariant(key="cccone", label="CCC One (cccone.com)", script="crawler.py"),),
-            notes="CCC credentials come from its .env. Description matching is case-insensitive substring matching; default: A/M: CAPA.",
+            notes="CCC credentials come from its .env. Choose By VIN & OEM or By VIN & PARTSLINK (Scenario).",
             input_spec=InputSpec(
                 required_headers=("VIN", "OEM"),
                 template_headers=("VIN", "OEM"),
                 hint="Use one vehicle per row. Separate multiple OEM numbers in a cell with commas.",
             ),
             output_columns=(
-                "Year", "Make", "Model", "VIN", "OEM", "Ipart listed on CCC",
+                "Year", "Make", "Model", "VIN", "Partslink", "OEM", "Part Description", "Ipart listed on CCC",
                 "Ipart List Price CCC", "Lowest CCC Price", "Lowest CCC Supplier",
                 "Next Lowest CCC Price", "Next Lowest CCC Supplier",
                 "Lowest CCC Price Supplier", "Status", "date_time", "market_data",
             ),
-            output_notes="Vehicle and OEM details, iPart price, lowest and next-lowest CCC prices and suppliers, plus status and market data.",
+            output_notes="Vehicle details, input Partslink when using scenario mode, estimate Part Number in OEM and estimate Description in Part Description, iPart price, lowest and next-lowest CCC prices and suppliers, plus status and market data.",
         ),
         CrawlerSpec(
             id="keystone",

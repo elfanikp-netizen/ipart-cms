@@ -39,6 +39,7 @@ export default function DashboardPage() {
   const [templateLoading, setTemplateLoading] = useState(false);
   const [column, setColumn] = useState("");
   const [site, setSite] = useState("");
+  const [searchAction, setSearchAction] = useState("vin_oem");
   const [description, setDescription] = useState("");
   const [limit, setLimit] = useState(0);
   const [delay, setDelay] = useState(1.5);
@@ -58,7 +59,17 @@ export default function DashboardPage() {
     [crawlers, crawlerId]
   );
   const selectedSite = selected?.sites.find((s) => s.key === site);
-  const inputRequirements = selectedSite?.input ?? selected?.input;
+  const defaultInputRequirements = selectedSite?.input ?? selected?.input;
+  const cccScenarioMode = selected?.id === "ccc" && searchAction === "vin_partslink_scenario";
+  const inputRequirements = cccScenarioMode && defaultInputRequirements
+    ? {
+        ...defaultInputRequirements,
+        required_headers: ["VIN", "PARTSLINK"],
+        header_alternatives: [],
+        template_headers: ["VIN", "PARTSLINK"],
+        hint: "Use one VIN and PARTSLINK value per row. The scenario is looked up from PARTSLINK characters 3-6.",
+      }
+    : defaultInputRequirements;
   const outputColumns = selectedSite?.output_columns?.length
     ? selectedSite.output_columns
     : selected?.output_columns ?? [];
@@ -85,6 +96,7 @@ export default function DashboardPage() {
   useEffect(() => {
     setSite(selected?.sites?.[0]?.key ?? "");
     setDescription(selected?.description_default ?? "");
+    setSearchAction("vin_oem");
     setWorkbookTab("input");
   }, [selected]);
 
@@ -107,7 +119,7 @@ export default function DashboardPage() {
     let active = true;
     setInputPreview(null);
     setInputPreviewLoading(true);
-    previewInput(crawlerId, file, site, column)
+    previewInput(crawlerId, file, site, column, searchAction)
       .then((preview) => {
         if (active) setInputPreview(preview);
       })
@@ -118,7 +130,7 @@ export default function DashboardPage() {
         if (active) setInputPreviewLoading(false);
       });
     return () => { active = false; };
-  }, [file, crawlerId, site, column]);
+  }, [file, crawlerId, site, column, searchAction]);
 
   useEffect(() => {
     const load = () => {
@@ -137,7 +149,7 @@ export default function DashboardPage() {
     setShowVpnWarning(false);
     try {
       const run = await createRun(crawlerId, file, {
-        column, site, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
+        column, site, search_action: searchAction, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
       });
       navigate(`/runs/${run.id}`);
     } catch (err) {
@@ -163,7 +175,7 @@ export default function DashboardPage() {
     setTemplateLoading(true);
     setError(null);
     try {
-      const template = await downloadCrawlerTemplate(selected.id, site);
+      const template = await downloadCrawlerTemplate(selected.id, site, searchAction);
       const url = URL.createObjectURL(template);
       const link = document.createElement("a");
       link.href = url;
@@ -226,6 +238,17 @@ export default function DashboardPage() {
               />
             </label>
           </div>
+          {selected?.id === "ccc" && (
+            <div className="form-row">
+              <label>
+                Search action
+                <select value={searchAction} onChange={(event) => setSearchAction(event.target.value)}>
+                  <option value="vin_oem">By VIN &amp; OEM</option>
+                  <option value="vin_partslink_scenario">By VIN &amp; PARTSLINK (Scenario)</option>
+                </select>
+              </label>
+            </div>
+          )}
           {selected && inputRequirements && (
             <>
               <div className="workbook-tabs" role="group" aria-label="Workbook information">

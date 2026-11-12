@@ -16,6 +16,40 @@ def normalize_header(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
 
+def ccc_scenario_code_from_partslink(value: object) -> str:
+    partslink = "".join(str(value or "").split())
+    return partslink[2:6] if len(partslink) >= 6 else ""
+
+
+def read_ccc_scenario_input(content: bytes, suffix: str) -> tuple[list[str], list[tuple[int, tuple]]]:
+    if suffix.casefold() == ".xls":
+        workbook = xlrd.open_workbook(file_contents=content, on_demand=True)
+        try:
+            if workbook.nsheets == 0:
+                return [], []
+            sheet = workbook.sheet_by_index(0)
+            headers = [normalize_header(value) for value in (sheet.row_values(0) if sheet.nrows else [])]
+            rows = [
+                (row_index + 1, tuple(sheet.row_values(row_index)))
+                for row_index in range(1, sheet.nrows)
+            ]
+            return headers, rows
+        finally:
+            workbook.release_resources()
+
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        if not workbook.worksheets:
+            return [], []
+        worksheet = workbook.active
+        iterator = worksheet.iter_rows(values_only=True)
+        headers = [normalize_header(value) for value in next(iterator, ())]
+        rows = [(row_index, tuple(row)) for row_index, row in enumerate(iterator, start=2)]
+        return headers, rows
+    finally:
+        workbook.close()
+
+
 def inspect_workbook(content: bytes, suffix: str) -> tuple[list[str], bool]:
     """Return the first-row headers and whether the active sheet has any data rows."""
     extension = suffix.casefold()

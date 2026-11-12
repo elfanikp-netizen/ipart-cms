@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import urllib.request
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from zipfile import is_zipfile
@@ -14,17 +15,27 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..crawlers import CRAWLERS, get_crawler
+from ..crawlers import CRAWLERS, InputSpec, get_crawler
 from ..db import SessionLocal
 from ..deps import get_current_user, log_activity
-from ..input_files import carid_input_mode, create_template, inspect_workbook, resolve_column_header, validate_input
-from ..models import Activity, Run, User, utcnow
+from ..input_files import (
+    carid_input_mode,
+    ccc_scenario_code_from_partslink,
+    create_template,
+    inspect_workbook,
+    read_ccc_scenario_input,
+    resolve_column_header,
+    validate_input,
+)
+from ..models import Activity, CccScenario, Run, User, utcnow
 from ..runner import runner
 from ..schemas import ActivityPageOut, QueueOut, RunOut
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
 ALLOWED_INPUT_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
+CCC_SEARCH_BY_VIN_OEM = "vin_oem"
+CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO = "vin_partslink_scenario"
 LOG_TAIL_BYTES = 256 * 1024
 VPN_ADAPTER_PATTERN = r"(?i)(vpn|wireguard|wintun|tap-windows|openvpn|nordlynx|tailscale|zerotier|anyconnect|fortinet|forticlient|globalprotect|proton|mullvad|expressvpn|nordvpn)"
 
@@ -123,6 +134,81 @@ def require_run_owner_or_admin(run: Run, user: User) -> None:
         raise HTTPException(403, "Only the run owner or a superadmin can perform this action")
 
 
+def resolve_ccc_scenarios(content: bytes, suffix: str, db: Session) -> tuple[list[str], dict[str, str]]:
+    headers, rows = read_ccc_scenario_input(content, suffix)
+    missing = [name.upper() for name in ("vin", "partslink") if name not in headers]
+    if missing:
+        return [f"Missing required header(s): {', '.join(missing)}."], {}
+    if not rows:
+        return ["The first worksheet has no data rows."], {}
+
+    vin_index = headers.index("vin")
+    partslink_index = headers.index("partslink")
+    input_rows = []
+    codes = set()
+    errors = []
+    for row_number, values in rows:
+        vin = str(values[vin_index] or "").strip() if vin_index < len(values) else ""
+        partslink = str(values[partslink_index] or "").strip() if partslink_index < len(values) else ""
+        if not vin and not partslink:
+            continue
+        if not vin:
+            errors.append(f"Row {row_number}: VIN is empty.")
+            continue
+        if not partslink:
+            errors.append(f"Row {row_number}: PARTSLINK is empty.")
+            continue
+        code = ccc_scenario_code_from_partslink(partslink)
+        if not code:
+            errors.append(f"Row {row_number}: PARTSLINK '{partslink}' is too short to derive the scenario code.")
+            continue
+        input_rows.append((row_number, code))
+        codes.add(code)
+    if not input_rows and not errors:
+        errors.append("The first worksheet has no VIN and PARTSLINK data rows.")
+
+    records = db.scalars(
+        select(CccScenario).where(CccScenario.part_code.in_(codes)).order_by(CccScenario.id)
+    ).all() if codes else []
+    found_codes = {record.part_code.strip() for record in records}
+    scenarios = {
+        record.part_code.strip(): record.scenario.strip()
+        for record in records
+        if record.scenario and record.scenario.strip()
+    }
+    for row_number, code in input_rows:
+        if code not in found_codes:
+            errors.append(f"Row {row_number}: Part Code {code} was not found in CCC Scenario.")
+        elif not scenarios.get(code):
+            errors.append(f"Row {row_number}: Scenario is empty for Part Code {code}.")
+    return errors, scenarios
+
+
+def add_ccc_scenario_column(content: bytes, suffix: str, scenarios: dict[str, str]) -> bytes:
+    workbook = load_workbook(BytesIO(content), keep_vba=suffix == ".xlsm")
+    try:
+        worksheet = workbook.active
+        header_columns = {
+            "".join(character for character in str(cell.value or "").casefold() if character.isalnum()): cell.column
+            for cell in worksheet[1]
+        }
+        partslink_index = header_columns.get("partslink")
+        vin_index = header_columns.get("vin")
+        if partslink_index is None or vin_index is None:
+            raise HTTPException(400, "Input workbook must have VIN and PARTSLINK columns")
+        scenario_index = header_columns.get("scenario", worksheet.max_column + 1)
+        worksheet.cell(row=1, column=scenario_index, value="Scenario")
+        for row_number in range(2, worksheet.max_row + 1):
+            partslink = str(worksheet.cell(row=row_number, column=partslink_index).value or "").strip()
+            code = ccc_scenario_code_from_partslink(partslink)
+            worksheet.cell(row=row_number, column=scenario_index, value=scenarios.get(code, ""))
+        output = BytesIO()
+        workbook.save(output)
+        return output.getvalue()
+    finally:
+        workbook.close()
+
+
 @router.get("/crawlers")
 def list_crawlers(_: User = Depends(get_current_user)):
     return [spec.to_dict() for spec in CRAWLERS.values()]
@@ -132,11 +218,18 @@ def list_crawlers(_: User = Depends(get_current_user)):
 def download_input_template(
     crawler_id: str,
     site: str = "",
+    search_action: str = CCC_SEARCH_BY_VIN_OEM,
     _: User = Depends(get_current_user),
 ):
     spec = get_crawler(crawler_id)
     if spec is None:
         raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
+    if crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO:
+        spec = replace(spec, input_spec=InputSpec(
+            required_headers=("VIN", "PARTSLINK"),
+            template_headers=("VIN", "PARTSLINK"),
+            hint="Use one vehicle and PARTSLINK value per row. CCC Scenario is filled automatically from the PARTSLINK code.",
+        ))
     variant = spec.resolve_site(site)
     site_name = f"-{variant.key}" if variant else ""
     return StreamingResponse(
@@ -152,6 +245,8 @@ async def preview_input(
     file: UploadFile = File(...),
     column: str = Form(""),
     site: str = Form(""),
+    search_action: str = Form(CCC_SEARCH_BY_VIN_OEM),
+    db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     spec = get_crawler(crawler_id)
@@ -165,7 +260,13 @@ async def preview_input(
         headers, has_data = inspect_workbook(content, suffix)
     except Exception as error:
         return {"headers": [], "valid": False, "errors": [f"Could not read workbook: {error}"]}
-    errors = validate_input(spec, site, column, headers, has_data)
+    if crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO:
+        if suffix not in {".xlsx", ".xlsm"}:
+            errors = ["By VIN & PARTSLINK (Scenario) requires an .xlsx or .xlsm workbook."]
+        else:
+            errors, _ = resolve_ccc_scenarios(content, suffix, db)
+    else:
+        errors = validate_input(spec, site, column, headers, has_data)
     return {"headers": headers, "valid": not errors, "errors": errors}
 
 
@@ -307,6 +408,7 @@ async def create_run(
     file: UploadFile = File(...),
     column: str = Form(""),
     site: str = Form(""),
+    search_action: str = Form(CCC_SEARCH_BY_VIN_OEM),
     description: str = Form(""),
     limit: int = Form(0),
     delay: float = Form(1.5),
@@ -320,6 +422,13 @@ async def create_run(
     spec = get_crawler(crawler_id)
     if spec is None:
         raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
+    if crawler_id == "ccc" and search_action not in {
+        CCC_SEARCH_BY_VIN_OEM,
+        CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO,
+    }:
+        raise HTTPException(400, "Unknown CCC search action")
+    if crawler_id != "ccc" and search_action != CCC_SEARCH_BY_VIN_OEM:
+        raise HTTPException(400, "Search action is only available for CCC Workflow")
     if not spec.python.exists():
         raise HTTPException(400, f"Python env not found: {spec.python}")
     if spec.column_required and not column.strip():
@@ -333,7 +442,13 @@ async def create_run(
         headers, has_data = inspect_workbook(file_content, suffix)
     except Exception as error:
         raise HTTPException(400, f"Could not read input workbook: {error}") from error
-    input_errors = validate_input(spec, site, column, headers, has_data)
+    scenario_mapping = {}
+    if crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO:
+        if suffix not in {".xlsx", ".xlsm"}:
+            raise HTTPException(400, "By VIN & PARTSLINK (Scenario) requires an .xlsx or .xlsm workbook")
+        input_errors, scenario_mapping = resolve_ccc_scenarios(file_content, suffix, db)
+    else:
+        input_errors = validate_input(spec, site, column, headers, has_data)
     if input_errors:
         raise HTTPException(400, " ".join(input_errors))
 
@@ -346,6 +461,7 @@ async def create_run(
         "column": column.strip(),
         "resolved_column": resolve_column_header(headers, column) or "",
         "site": site.strip(),
+        "search_action": search_action,
         "input_mode": input_mode,
         "description": description.strip(),
         "limit": limit,
@@ -365,6 +481,8 @@ async def create_run(
     run_dir = settings.data_dir / "runs" / str(run.id)
     run_dir.mkdir(parents=True, exist_ok=True)
     input_path = run_dir / f"input{suffix}"
+    if scenario_mapping:
+        file_content = add_ccc_scenario_column(file_content, suffix, scenario_mapping)
     input_path.write_bytes(file_content)
 
     run.input_path = str(input_path)
