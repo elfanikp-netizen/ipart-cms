@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import DashboardPage from "./pages/DashboardPage";
 import RunDetailPage from "./pages/RunDetailPage";
 import ActivityPage from "./pages/ActivityPage";
+import CccScenarioPage from "./pages/CccScenarioPage";
 import { NetworkStatusHeader, NetworkStatusProvider } from "./components/NetworkStatus";
 import RunningVpnWarning from "./components/RunningVpnWarning";
 
@@ -15,6 +16,8 @@ function portalUrl(path = "") {
 
 function Shell() {
   const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   if (loading) return <div className="loading-session">Checking portal session...</div>;
   if (!user) return <Navigate to="/login" replace />;
 
@@ -26,6 +29,15 @@ function Shell() {
           <nav className="menu">
             <Link to="/">Crawling</Link>
             <Link to="/activity">Activity</Link>
+            <select
+              aria-label="Tools"
+              className="menu-select"
+              value={location.pathname === "/ccc-scenario" ? "/ccc-scenario" : ""}
+              onChange={(event) => { if (event.target.value) navigate(event.target.value); }}
+            >
+              <option value="">Tools</option>
+              <option value="/ccc-scenario">CCC Scenario</option>
+            </select>
           </nav>
           <NetworkStatusHeader />
           <div className="user-chip">
@@ -39,6 +51,7 @@ function Shell() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/runs/:id" element={<RunDetailPage />} />
             <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/ccc-scenario" element={<CccScenarioPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

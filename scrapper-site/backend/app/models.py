@@ -70,3 +70,16 @@ class Run(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="runs")
+
+
+class CccScenario(Base):
+    __tablename__ = "ccc_scenarios"
+    __table_args__ = {"schema": APP_SCHEMA} if APP_SCHEMA else {}
+
+    id = Column(Integer, primary_key=True)
+    part_code = Column(String(150), nullable=False, index=True)
+    part_description = Column(Text, nullable=False, default="")
+    part_family = Column(String(255), nullable=False, default="")
+    scenario = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

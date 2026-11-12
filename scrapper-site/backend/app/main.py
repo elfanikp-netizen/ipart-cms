@@ -1,11 +1,14 @@
 from contextlib import asynccontextmanager
+from datetime import datetime
+import json
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, SessionLocal, engine, ensure_database_schema, migrate_user_app_access
-from .routers import runs
+from .models import CccScenario
+from .routers import ccc_scenarios, runs
 from .runner import runner
 
 
@@ -105,10 +108,92 @@ def migrate_scraper_activities() -> None:
                 ))
 
 
+def migrate_ccc_scenarios() -> None:
+    if engine.dialect.name not in {"postgresql", "sqlite"}:
+        return
+
+    from sqlalchemy import inspect, text
+
+    schema = "scrapping" if engine.dialect.name == "postgresql" else None
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names(schema=schema))
+    preparer = engine.dialect.identifier_preparer
+
+    def qualified(name: str) -> str:
+        table_name = preparer.quote(name)
+        return f"{preparer.quote_schema(schema)}.{table_name}" if schema else table_name
+
+    def normalized_timestamp(value):
+        if isinstance(value, str):
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return value
+
+    legacy_name = "ccc_scenarios_import_legacy"
+    if "ccc_scenarios" in tables:
+        columns = {column["name"] for column in inspector.get_columns("ccc_scenarios", schema=schema)}
+        if {"file_id", "data"}.issubset(columns) and legacy_name not in tables:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    f"ALTER TABLE {qualified('ccc_scenarios')} "
+                    f"RENAME TO {preparer.quote(legacy_name)}"
+                ))
+            tables.remove("ccc_scenarios")
+            tables.add(legacy_name)
+
+    with engine.begin() as connection:
+        CccScenario.__table__.create(connection, checkfirst=True)
+        destination = CccScenario.__table__
+        if legacy_name in tables:
+            old_rows = connection.execute(text(
+                f"SELECT data, created_at, updated_at FROM {qualified(legacy_name)} ORDER BY id"
+            )).mappings().all()
+            values = []
+            for row in old_rows:
+                data = row["data"] or {}
+                if isinstance(data, str):
+                    data = json.loads(data)
+                values.append({
+                    "part_code": str(data.get("Part Code") or "").strip(),
+                    "part_description": str(data.get("Part Description") or "").strip(),
+                    "part_family": str(data.get("Part Family") or "").strip(),
+                    "scenario": str(data.get("Scenario") or "").strip(),
+                    "created_at": normalized_timestamp(row["created_at"]),
+                    "updated_at": normalized_timestamp(row["updated_at"]),
+                })
+            if values:
+                connection.execute(destination.insert(), values)
+
+        if "ccc_scenario_codes" in tables:
+            codes = connection.execute(text(
+                f"SELECT partslink_code, created_at, updated_at "
+                f"FROM {qualified('ccc_scenario_codes')} ORDER BY id"
+            )).all()
+            if codes:
+                connection.execute(destination.insert(), [{
+                    "part_code": code,
+                    "part_description": "",
+                    "part_family": "",
+                    "scenario": "",
+                    "created_at": normalized_timestamp(created_at),
+                    "updated_at": normalized_timestamp(updated_at),
+                } for code, created_at, updated_at in codes])
+            connection.execute(text(f"DROP TABLE {qualified('ccc_scenario_codes')}"))
+
+        if legacy_name in tables:
+            connection.execute(text(f"DROP TABLE {qualified(legacy_name)}"))
+        if "ccc_scenarios" in tables and legacy_name not in tables:
+            columns = {column["name"] for column in inspector.get_columns("ccc_scenarios", schema=schema)}
+            if {"file_id", "data"}.issubset(columns):
+                connection.execute(text(f"DROP TABLE {qualified('ccc_scenarios')}"))
+        if "ccc_scenario_files" in tables:
+            connection.execute(text(f"DROP TABLE {qualified('ccc_scenario_files')}"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_database_schema()
     migrate_identity_schema()
+    migrate_ccc_scenarios()
     Base.metadata.create_all(engine)
     migrate_user_app_access()
     migrate_columns()
@@ -128,6 +213,7 @@ app.add_middleware(
 )
 
 app.include_router(runs.router)
+app.include_router(ccc_scenarios.router)
 
 
 @app.get("/api/health")

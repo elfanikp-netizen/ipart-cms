@@ -46,6 +46,13 @@ class ProfileUpdate(BaseModel):
     new_password: str | None = None
 
 
+class CccScenarioIn(BaseModel):
+    part_code: str
+    part_description: str = ""
+    part_family: str = ""
+    scenario: str = ""
+
+
 class ActivityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

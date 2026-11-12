@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Activity, ActivityPage, Crawler, InputPreview, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
+import type { Activity, ActivityPage, CccScenario, CccScenarioPage, Crawler, InputPreview, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
 
 // Same-origin by default: the Vite dev proxy (and any reverse proxy like ngrok)
 // forwards /api to the backend, so the UI works over the tunnel URL too.
@@ -67,6 +67,16 @@ export const listActivityPage = (params: { page: number; page_size: number; sear
   client.get<ActivityPage>("/api/activity/page", { params }).then((r) => r.data);
 export const listUserActivity = (userId: number, limit = 100) =>
   client.get<Activity[]>(`/api/users/${userId}/activity?limit=${limit}`).then((r) => r.data);
+
+// ---------------------------------------------------------------- CCC scenarios
+export type CccScenarioValues = Pick<CccScenario, "part_code" | "part_description" | "part_family" | "scenario">;
+export const listCccScenarios = (params: { search: string; page: number; page_size: number }) =>
+  client.get<CccScenarioPage>("/api/ccc-scenarios/records", { params }).then((r) => r.data);
+export const createCccScenario = (data: CccScenarioValues) =>
+  client.post<CccScenario>("/api/ccc-scenarios/records", data).then((r) => r.data);
+export const updateCccScenario = (recordId: number, data: CccScenarioValues) =>
+  client.put<CccScenario>(`/api/ccc-scenarios/records/${recordId}`, data).then((r) => r.data);
+export const deleteCccScenario = (recordId: number) => client.delete(`/api/ccc-scenarios/records/${recordId}`).then(() => undefined);
 
 // ---------------------------------------------------------------- crawlers & runs
 export const listCrawlers = () => client.get<Crawler[]>("/api/crawlers").then((r) => r.data);

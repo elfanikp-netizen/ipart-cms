@@ -1,0 +1,49 @@
+.menu-select {
+  min-height: 32px;
+  padding: 0 24px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+}
+.menu-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ccc-page { min-width: 0; }
+.ccc-edit-form { margin: 12px 0 18px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.ccc-form-heading, .ccc-record-toolbar, .ccc-row-actions, .ccc-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ccc-form-heading, .ccc-record-toolbar { justify-content: space-between; }
+.ccc-form-heading { margin-bottom: 12px; }
+.ccc-form-heading h2 { margin: 0; color: var(--text); font-size: 1rem; }
+.ccc-edit-form button.secondary { border: 1px solid var(--border); background: transparent; color: var(--text); }
+.ccc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.ccc-fields label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: var(--muted); font-size: 0.8rem; }
+.ccc-fields input, .ccc-record-toolbar input {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.ccc-record-toolbar { margin: 12px 0; }
+.ccc-record-toolbar input { width: min(320px, 100%); }
+.ccc-table-wrap { overflow: auto; max-height: 65vh; border-top: 1px solid var(--border); }
+.ccc-table-wrap th, .ccc-table-wrap td { max-width: 360px; overflow-wrap: anywhere; }
+.ccc-actions-head { min-width: 142px; }
+.ccc-row-actions { white-space: nowrap; }
+.ccc-row-actions button { padding: 5px 9px; font-size: 0.78rem; }
+.ccc-pagination { justify-content: flex-end; padding-top: 12px; color: var(--muted); font-size: 0.8rem; }
+.ccc-pagination button { padding: 5px 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.ccc-pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
+.ccc-empty { padding: 18px 0; }
+@media (max-width: 640px) {
+  .ccc-record-toolbar { align-items: stretch; flex-direction: column; }
+  .ccc-record-toolbar input { width: 100%; }
+  .ccc-pagination { justify-content: space-between; gap: 5px; }
+  .ccc-row-actions { align-items: stretch; flex-direction: column; }
+}

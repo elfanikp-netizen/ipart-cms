@@ -25,6 +25,24 @@ export interface ActivityPage {
   pages: number;
 }
 
+export interface CccScenario {
+  id: number;
+  part_code: string;
+  part_description: string;
+  part_family: string;
+  scenario: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CccScenarioPage {
+  items: CccScenario[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
 export interface Crawler {
   id: string;
   name: string;
