@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import create_engine, event, inspect, select, text, update
+from sqlalchemy import create_engine, event, func, inspect, select, text, tuple_, update
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import settings
@@ -251,7 +251,6 @@ def migrate_ccc_market_rows() -> None:
 
 def migrate_oem_vin_validity() -> None:
     from .models import OEM_VIN, CccMarketRecord, Oem, Vin
-    from .routers.master_data import normalized_key
 
     schema = "universe" if engine.dialect.name == "postgresql" else None
     inspector = inspect(engine)
@@ -266,46 +265,28 @@ def migrate_oem_vin_validity() -> None:
             connection.execute(text(
                 f"ALTER TABLE {table} ADD COLUMN is_valid BOOLEAN NOT NULL DEFAULT FALSE"
             ))
-        if not needs_backfill:
-            return
         if engine.dialect.name == "postgresql":
-            connection.execute(text(f"""
-                WITH ccc_pairs AS (
-                    SELECT DISTINCT
-                        lower(regexp_replace(btrim(oem), '\\s+', ' ', 'g')) AS oem_key,
-                        lower(regexp_replace(btrim(vin), '\\s+', ' ', 'g')) AS vin_key
-                    FROM universe.ccc_market_data
-                ), valid_fitments AS (
-                    SELECT ov.id_oem, ov.id_vin
-                    FROM {table} AS ov
-                    JOIN universe.oem AS o ON o.id = ov.id_oem
-                    JOIN universe.vin AS v ON v.id = ov.id_vin
-                    JOIN ccc_pairs AS c
-                      ON c.oem_key = lower(regexp_replace(btrim(o.oem), '\\s+', ' ', 'g'))
-                     AND c.vin_key = lower(regexp_replace(btrim(v.vin), '\\s+', ' ', 'g'))
-                )
-                UPDATE {table} AS ov
-                SET is_valid = TRUE
-                FROM valid_fitments AS vf
-                WHERE ov.id_oem = vf.id_oem AND ov.id_vin = vf.id_vin
-            """))
+            ccc_oem_key = func.lower(func.regexp_replace(func.btrim(CccMarketRecord.oem), r"\s+", " ", "g"))
+            ccc_vin_key = func.lower(func.regexp_replace(func.btrim(CccMarketRecord.vin), r"\s+", " ", "g"))
         else:
-            ccc_pairs = {
-                (normalized_key(oem), normalized_key(vin))
-                for oem, vin in connection.execute(select(CccMarketRecord.oem, CccMarketRecord.vin)).all()
-            }
-            links = connection.execute(
-                select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin, Oem.oem, Vin.vin)
-                .join(Oem, Oem.id == OEM_VIN.c.id_oem)
-                .join(Vin, Vin.id == OEM_VIN.c.id_vin)
-            ).all()
-            for id_oem, id_vin, oem, vin in links:
-                connection.execute(
-                    update(OEM_VIN).where(
-                        OEM_VIN.c.id_oem == id_oem,
-                        OEM_VIN.c.id_vin == id_vin,
-                    ).values(is_valid=(normalized_key(oem), normalized_key(vin)) in ccc_pairs)
-                )
+            ccc_oem_key = func.lower(func.trim(CccMarketRecord.oem))
+            ccc_vin_key = func.lower(func.trim(CccMarketRecord.vin))
+
+        ccc_pairs = select(
+            ccc_oem_key.label("oem_key"),
+            ccc_vin_key.label("vin_key"),
+        ).distinct().subquery()
+        oem_key = func.lower(func.regexp_replace(func.btrim(Oem.oem), r"\s+", " ", "g")) if engine.dialect.name == "postgresql" else func.lower(func.trim(Oem.oem))
+        vin_key = func.lower(func.regexp_replace(func.btrim(Vin.vin), r"\s+", " ", "g")) if engine.dialect.name == "postgresql" else func.lower(func.trim(Vin.vin))
+        valid_links = select(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin).select_from(
+            OEM_VIN.join(Oem, Oem.id == OEM_VIN.c.id_oem)
+            .join(Vin, Vin.id == OEM_VIN.c.id_vin)
+            .join(ccc_pairs, (ccc_pairs.c.oem_key == oem_key) & (ccc_pairs.c.vin_key == vin_key))
+        )
+        connection.execute(update(OEM_VIN).where(
+            OEM_VIN.c.is_valid.is_(False),
+            tuple_(OEM_VIN.c.id_oem, OEM_VIN.c.id_vin).in_(valid_links),
+        ).values(is_valid=True))
 
 
 def migrate_user_app_access() -> None:

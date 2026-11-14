@@ -51,6 +51,7 @@ export default function DashboardPage() {
   const [continuingRunId, setContinuingRunId] = useState<number | null>(null);
   const [showVpnWarning, setShowVpnWarning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const startRunLock = useRef(false);
   const navigate = useNavigate();
   const { status: networkStatus, refresh: refreshNetworkStatus } = useNetworkStatus();
 
@@ -142,32 +143,63 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
-  const queueRun = async () => {
-    if (!file || !crawlerId || inputPreview?.valid !== true) return;
+  const queueRun = async (lockAcquired = false) => {
+    if (startRunLock.current && !lockAcquired) return;
+    if (!file || !crawlerId || inputPreview?.valid !== true) {
+      startRunLock.current = false;
+      setSubmitting(false);
+      return;
+    }
+    startRunLock.current = true;
     setSubmitting(true);
     setError(null);
     setShowVpnWarning(false);
     try {
+      const signature = JSON.stringify({
+        crawlerId,
+        file: [file.name, file.size, file.lastModified],
+        column, site, searchAction, description, limit, delay, fresh, show, debug, manualLogin,
+      });
+      const storageKey = "scrapper.pending-run-request";
+      let requestKey: string = crypto.randomUUID();
+      try {
+        const pending = JSON.parse(sessionStorage.getItem(storageKey) || "null") as { signature?: string; key?: string } | null;
+        if (pending?.signature === signature && pending.key) requestKey = pending.key;
+        else sessionStorage.setItem(storageKey, JSON.stringify({ signature, key: requestKey }));
+      } catch {
+        // The in-memory lock still prevents repeated clicks if session storage is unavailable.
+      }
       const run = await createRun(crawlerId, file, {
         column, site, search_action: searchAction, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
-      });
+      }, requestKey);
+      try {
+        const pending = JSON.parse(sessionStorage.getItem(storageKey) || "null") as { key?: string } | null;
+        if (pending?.key === requestKey) sessionStorage.removeItem(storageKey);
+      } catch {
+        // Ignore unavailable session storage after the server confirms the run.
+      }
       navigate(`/runs/${run.id}`);
     } catch (err) {
       setError(errorText(err));
       setSubmitting(false);
+      startRunLock.current = false;
     }
   };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !crawlerId || inputPreview?.valid !== true) return;
+    if (startRunLock.current || !file || !crawlerId || inputPreview?.valid !== true) return;
+    startRunLock.current = true;
+    setSubmitting(true);
     setError(null);
     const latestStatus = await refreshNetworkStatus();
     if (latestStatus?.vpn_likely !== true) {
       setShowVpnWarning(true);
+      setSubmitting(false);
+      startRunLock.current = false;
       return;
     }
-    await queueRun();
+    await queueRun(true);
   };
 
   const getInputTemplate = async () => {
@@ -398,7 +430,7 @@ export default function DashboardPage() {
           </div>
           {selected?.notes && <p className="notes">ℹ️ {selected.notes}</p>}
           {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true}>
+          <button className="primary" type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true}>
             {submitting ? "Uploading…" : "▶ Start run"}
           </button>
         </form>
@@ -422,7 +454,7 @@ export default function DashboardPage() {
             <small className="muted">VPN detection is approximate and does not confirm which route the target site receives.</small>
             <div className="dialog-actions">
               <button type="button" className="secondary" onClick={() => setShowVpnWarning(false)}>Cancel</button>
-              <button type="button" onClick={() => void queueRun()} disabled={submitting}>
+              <button className="primary" type="button" onClick={() => void queueRun()} disabled={submitting}>
                 {submitting ? "Starting…" : "Continue without VPN"}
               </button>
             </div>

@@ -8,7 +8,7 @@
   font: inherit;
   font-weight: 600;
 }
-.menu-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.menu-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ccc-page { min-width: 0; }
 .ccc-edit-form { margin: 12px 0 18px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .ccc-form-heading, .ccc-record-toolbar, .ccc-row-actions, .ccc-pagination {

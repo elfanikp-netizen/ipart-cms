@@ -12,6 +12,7 @@ import CatalogPairsPage from "./pages/CatalogPairsPage";
 import SearchSelect from "./components/SearchSelect";
 import ColumnHeader from "./components/ColumnHeader";
 import type { ColumnFilterValue } from "./components/ColumnHeader";
+import OperationProgress from "./components/OperationProgress";
 
 type Dataset = "vehicles" | "vins" | "oem" | "partslinks" | "interchanges" | "pairs" | "ccc" | "parts-msrp";
 type MasterDataset = "vehicles" | "vins";
@@ -116,6 +117,7 @@ function App() {
           title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
           onClick={() => setSidebarVisible((visible) => !visible)}
         ><span aria-hidden="true">{sidebarVisible ? "‹" : "☰"}</span></button><div><span className="crumb">{activityActive ? "AUDIT" : activeDataset === "ccc" || activeDataset === "parts-msrp" ? "MARKET" : "MASTER DATA"}</span><span className="crumb-divider">/</span><strong>{activityActive ? "Activity" : activeDataset === "vehicles" ? "Vehicle" : activeDataset === "vins" ? "VIN" : activeDataset === "oem" ? "OEM" : activeDataset === "partslinks" ? "Partslink" : activeDataset === "interchanges" ? "Interchange" : activeDataset === "pairs" ? "Cross-reference" : activeDataset === "parts-msrp" ? "PARTS - MSRP" : "CCC"}</strong></div></div><div className="top-user"><span className="user-avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span>{user.display_name || user.username}</span><a href="/">Portal</a></div></header>
+        <OperationProgress />
         <Routes>
           <Route path="/" element={<Navigate to="/vehicles" replace />} />
           <Route path="/vehicles" element={<MasterDataPage dataset="vehicles" />} />

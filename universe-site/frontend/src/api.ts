@@ -1,4 +1,5 @@
 import axios from "axios";
+import { beginOperation, finishOperation, updateOperation } from "./components/operation-progress-store";
 
 export interface Vehicle {
   id: number;
@@ -245,6 +246,71 @@ export interface CccMarketImportSummary {
 }
 
 export const client = axios.create({ withCredentials: true });
+
+const trackedOperations = new WeakMap<object, number>();
+
+function operationDetails(url = "", method = "get") {
+  const path = url.split("?")[0].toLocaleLowerCase();
+  const kind = /\/import\/?$/.test(path) ? "import" : /\/export(?:-[^/]+)?\/?$/.test(path) ? "export" : null;
+  if (!kind) return null;
+
+  const route = path.replace(/^.*\/api\/universe\//, "").replace(/\/(?:import|export(?:-[^/]+)?)\/?$/, "");
+  const labels: Record<string, string> = {
+    vehicles: "Vehicles", vins: "VINs", oems: "OEMs", oem: "OEMs",
+    partslinks: "Partslink", interchanges: "Interchanges",
+    "partslink-interchange": "Cross-reference", "market/ccc": "CCC market",
+    "market/parts-msrp": "Parts MSRP",
+  };
+  const routeParts = route.split("/");
+  const label = labels[route] ?? routeParts[routeParts.length - 1]?.replace(/-/g, " ") ?? "data";
+  const hasUpload = method.toLocaleLowerCase() === "post";
+  return { kind, label, phase: hasUpload ? "uploading" : "processing" } as const;
+}
+
+client.interceptors.request.use((config) => {
+  const details = operationDetails(config.url, config.method);
+  if (!details) return config;
+
+  const id = beginOperation(details.kind, details.label, details.phase);
+  trackedOperations.set(config, id);
+  if (details.phase === "uploading") {
+    config.onUploadProgress = (event) => {
+      if (event.total && event.total > 0) {
+        const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+        updateOperation(id, percent >= 100
+          ? { phase: "processing", percent: null }
+          : { phase: "uploading", percent });
+      }
+    };
+  }
+  if (details.kind === "export") {
+    config.onDownloadProgress = (event) => {
+      const percent = event.total && event.total > 0
+        ? Math.min(100, Math.round((event.loaded / event.total) * 100))
+        : null;
+      updateOperation(id, { phase: "downloading", percent });
+    };
+  }
+  return config;
+});
+
+client.interceptors.response.use(
+  (response) => {
+    const id = trackedOperations.get(response.config);
+    if (id !== undefined) finishOperation(id);
+    return response;
+  },
+  (error: unknown) => {
+    if (axios.isAxiosError(error) && error.config) {
+      const id = trackedOperations.get(error.config);
+      if (id !== undefined) {
+        const detail = (error.response?.data as { detail?: string } | undefined)?.detail;
+        finishOperation(id, detail ?? error.message ?? "The operation failed.");
+      }
+    }
+    return Promise.reject(error);
+  },
+);
 
 export function errorText(error: unknown): string {
   if (axios.isAxiosError(error)) {

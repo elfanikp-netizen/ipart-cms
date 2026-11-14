@@ -114,7 +114,7 @@ export default function CccScenarioPage() {
           <h1>CCC Scenario</h1>
           <p className="muted">Part Codes, descriptions, families, and scenarios</p>
         </div>
-        <button type="button" onClick={startCreate}>Add scenario</button>
+        <button className="primary" type="button" onClick={startCreate}>Add scenario</button>
       </div>
 
       {error && <p className="error" role="alert">{error}</p>}
@@ -143,7 +143,7 @@ export default function CccScenarioPage() {
               <input value={values.scenario} onChange={(event) => setField("scenario", event.target.value)} />
             </label>
           </div>
-          <button type="submit" disabled={busy}>{busy ? "Saving..." : editing ? "Save changes" : "Create scenario"}</button>
+          <button className="primary" type="submit" disabled={busy}>{busy ? "Saving..." : editing ? "Save changes" : "Create scenario"}</button>
         </form>
       )}
 

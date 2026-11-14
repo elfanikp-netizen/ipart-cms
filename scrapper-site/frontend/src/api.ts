@@ -107,10 +107,10 @@ export const continueRun = (id: number) => client.post<Run>(`/api/runs/${id}/con
 
 export const outputUrl = (id: number) => `${API}/api/runs/${id}/output`;
 
-export function createRun(crawlerId: string, file: File, opts: Record<string, string | number | boolean>) {
+export function createRun(crawlerId: string, file: File, opts: Record<string, string | number | boolean>, idempotencyKey: string) {
   const form = new FormData();
   form.append("crawler_id", crawlerId);
   form.append("file", file);
   for (const [k, v] of Object.entries(opts)) form.append(k, String(v));
-  return client.post<Run>("/api/runs", form).then((r) => r.data);
+  return client.post<Run>("/api/runs", form, { headers: { "Idempotency-Key": idempotencyKey } }).then((r) => r.data);
 }

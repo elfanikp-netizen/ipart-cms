@@ -13,22 +13,35 @@ from .runner import runner
 
 
 def migrate_columns() -> None:
-    """Add columns introduced after the initial schema (lightweight, SQLite)."""
+    """Add columns and indexes introduced after the initial schema."""
     from sqlalchemy import inspect, text
 
+    schema = settings.database_schema if engine.dialect.name == "postgresql" else None
     insp = inspect(engine)
-    if "runs" not in insp.get_table_names():
+    if "runs" not in insp.get_table_names(schema=schema):
         return
-    existing = {c["name"] for c in insp.get_columns("runs")}
+    existing = {c["name"] for c in insp.get_columns("runs", schema=schema)}
     wanted = {
         "user_id": "INTEGER",
         "progress_done": "INTEGER",
         "progress_total": "INTEGER",
+        "idempotency_key": "VARCHAR(64)",
     }
+    indexes = {index["name"] for index in insp.get_indexes("runs", schema=schema)}
+    constraints = {item.get("name") for item in insp.get_unique_constraints("runs", schema=schema)}
+    preparer = engine.dialect.identifier_preparer
+    table_name = preparer.quote("runs")
+    table = f"{preparer.quote_schema(schema)}.{table_name}" if schema else table_name
+    index_name = "uq_runs_user_idempotency_key"
+    index = preparer.quote(index_name)
     with engine.begin() as conn:
         for name, coltype in wanted.items():
             if name not in existing:
-                conn.execute(text(f"ALTER TABLE runs ADD COLUMN {name} {coltype}"))
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {preparer.quote(name)} {coltype}"))
+        if index_name not in indexes and index_name not in constraints:
+            conn.execute(text(
+                f"CREATE UNIQUE INDEX {index} ON {table} (user_id, idempotency_key)"
+            ))
 
 
 def migrate_identity_schema() -> None:

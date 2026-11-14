@@ -1,0 +1,48 @@
+.operation-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px clamp(18px, 4vw, 58px) 0;
+  padding: 11px 13px;
+  border: 1px solid #d5dfd8;
+  background: #fff;
+  color: #23332a;
+  box-shadow: 0 5px 16px rgba(24, 45, 33, 0.06);
+}
+.operation-progress-mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8f0ea;
+  color: #31684c;
+  font-size: 15px;
+  font-weight: 700;
+}
+.operation-progress:not(.complete):not(.failed) .operation-progress-mark { animation: operation-spin 1.4s linear infinite; }
+.operation-progress-content { display: grid; min-width: 0; flex: 1; gap: 5px; }
+.operation-progress-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.operation-progress-heading strong { color: #25372d; font-size: 11px; font-weight: 800; }
+.operation-progress-heading span, .operation-progress small { color: #77847c; font-size: 9px; }
+.operation-progress-track { position: relative; height: 5px; overflow: hidden; border-radius: 99px; background: #e8ede9; }
+.operation-progress-track span { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: #27765b; transition: width 180ms ease; }
+.operation-progress-track span.indeterminate { width: 32%; animation: operation-progress-slide 1.3s ease-in-out infinite; }
+.operation-progress.failed { border-color: #edd0c9; background: #fff9f7; }
+.operation-progress.failed .operation-progress-mark { background: #fae9e5; color: #a94c3e; }
+.operation-progress.failed .operation-progress-heading strong { color: #984b3f; }
+.operation-progress.failed p { margin: 0; color: #984b3f; font-size: 10px; overflow-wrap: anywhere; }
+.operation-progress.complete .operation-progress-mark { background: #e6f2e8; color: #356b4b; }
+.operation-progress-dismiss { display: grid; width: 26px; height: 26px; flex: 0 0 26px; place-items: center; padding: 0; border: 0; background: transparent; color: #66736b; font-size: 18px; }
+.operation-progress-dismiss:hover { background: #edf2ee; color: #263b2f; }
+@keyframes operation-progress-slide { from { transform: translateX(-120%); } to { transform: translateX(320%); } }
+@keyframes operation-spin { to { transform: rotate(360deg); } }
+@media (max-width: 650px) {
+  .operation-progress { margin: 10px 14px 0; gap: 9px; }
+  .operation-progress-heading { gap: 3px 7px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .operation-progress:not(.complete):not(.failed) .operation-progress-mark,
+  .operation-progress-track span.indeterminate { animation-duration: 3s; }
+}

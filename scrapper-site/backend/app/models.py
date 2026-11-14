@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import foreign, relationship
 
 from .db import Base, engine
@@ -50,9 +50,11 @@ class Activity(Base):
 
 class Run(Base):
     __tablename__ = "runs"
+    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_runs_user_idempotency_key"),)
 
     id = Column(Integer, primary_key=True)
     user_id = Column(ForeignKey(f"{IDENTITY_USER_TABLE}.id"), nullable=True)
+    idempotency_key = Column(String(64), nullable=True)
     crawler_id = Column(String(50), nullable=False)
     status = Column(String(20), default="queued")  # queued | running | success | failed | stopped
     params = Column(Text, default="{}")            # JSON: column, limit, fresh, show, ...

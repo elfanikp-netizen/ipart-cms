@@ -8,10 +8,11 @@ from io import BytesIO
 from pathlib import Path
 from zipfile import is_zipfile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from openpyxl import load_workbook
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -416,9 +417,19 @@ async def create_run(
     show: bool = Form(False),
     debug: bool = Form(False),
     manual_login: bool = Form(False),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=64),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    idempotency_key = idempotency_key.strip() if idempotency_key else None
+    if idempotency_key:
+        existing_run = db.scalar(select(Run).where(
+            Run.user_id == user.id,
+            Run.idempotency_key == idempotency_key,
+        ))
+        if existing_run is not None:
+            return to_out(existing_run, user)
+
     spec = get_crawler(crawler_id)
     if spec is None:
         raise HTTPException(404, f"Unknown crawler '{crawler_id}'")
@@ -473,22 +484,44 @@ async def create_run(
         "original_filename": file.filename,
     }
 
-    run = Run(crawler_id=crawler_id, status="queued", params=json.dumps(params), user_id=user.id)
+    run = Run(
+        crawler_id=crawler_id,
+        status="queued",
+        params=json.dumps(params),
+        user_id=user.id,
+        idempotency_key=idempotency_key,
+    )
     db.add(run)
-    db.commit()
-    db.refresh(run)
+    try:
+        db.flush()
+    except IntegrityError as error:
+        db.rollback()
+        if idempotency_key:
+            existing_run = db.scalar(select(Run).where(
+                Run.user_id == user.id,
+                Run.idempotency_key == idempotency_key,
+            ))
+            if existing_run is not None:
+                return to_out(existing_run, user)
+        raise HTTPException(409, "Run creation conflicted with an existing request") from error
 
     run_dir = settings.data_dir / "runs" / str(run.id)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    input_path = run_dir / f"input{suffix}"
-    if scenario_mapping:
-        file_content = add_ccc_scenario_column(file_content, suffix, scenario_mapping)
-    input_path.write_bytes(file_content)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        input_path = run_dir / f"input{suffix}"
+        if scenario_mapping:
+            file_content = add_ccc_scenario_column(file_content, suffix, scenario_mapping)
+        input_path.write_bytes(file_content)
 
-    run.input_path = str(input_path)
-    run.output_path = str(run_dir / "output.xlsx")
-    run.log_path = str(run_dir / "run.log")
-    db.commit()
+        run.input_path = str(input_path)
+        run.output_path = str(run_dir / "output.xlsx")
+        run.log_path = str(run_dir / "run.log")
+        db.commit()
+        db.refresh(run)
+    except Exception:
+        db.rollback()
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
 
     runner.enqueue(run.id)
     site_suffix = f" [{site.strip()}]" if site.strip() else ""

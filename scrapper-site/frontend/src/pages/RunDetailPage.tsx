@@ -151,7 +151,7 @@ export default function RunDetailPage() {
           </button>
         )}
         {run.can_manage && run.has_output && (
-          <button onClick={() => void downloadOutput()}>⬇ Download output Excel</button>
+          <button className="primary" onClick={() => void downloadOutput()}>⬇ Download output Excel</button>
         )}
       </div>
       {downloadError && <p className="error" role="alert">Download failed: {downloadError}</p>}
