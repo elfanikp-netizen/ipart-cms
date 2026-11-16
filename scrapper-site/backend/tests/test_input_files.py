@@ -21,6 +21,25 @@ def workbook_bytes(headers: list[str], rows: list[list[object]]) -> bytes:
 
 
 class InputFileTests(unittest.TestCase):
+    def test_google_vin_lookup_uses_dedicated_profile_and_site_scoped_login(self) -> None:
+        spec = CRAWLERS["vin-lookup"]
+        google_args = spec.build_args(
+            {"site": "google", "manual_login": True},
+            Path("input.xlsx"),
+            Path("output.xlsx"),
+        )
+        vininspect_args = spec.build_args(
+            {"site": "vininspect", "manual_login": True},
+            Path("input.xlsx"),
+            Path("output.xlsx"),
+        )
+
+        self.assertIn("--manual-login", google_args)
+        profile_index = google_args.index("--profile")
+        self.assertEqual(google_args[profile_index + 1], str(spec.cwd / ".google-profile"))
+        self.assertNotIn("--manual-login", vininspect_args)
+        self.assertNotIn("--profile", vininspect_args)
+
     def test_inspect_workbook_returns_headers_and_data_state(self) -> None:
         content = workbook_bytes([" VIN ", "OEM"], [["1HGCM82633A004352", "12345"]])
 

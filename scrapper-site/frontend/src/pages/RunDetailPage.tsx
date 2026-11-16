@@ -117,14 +117,14 @@ export default function RunDetailPage() {
         Run #{run.id} — {run.crawler_name}{" "}
         <span className={`status ${run.status}`}>{run.status}</span>
         {run.waiting_for_human && (
-          <span className="status waiting">⚠ waiting for human verification</span>
+          <span className="status waiting">⚠ waiting for browser action</span>
         )}
       </h1>
 
       {run.waiting_for_human && (
         <div className="alert">
-          A Cloudflare / human-verification check is showing. Open the Chrome window on this
-          machine, complete the check — the run continues automatically.
+          A browser action is required. Open the browser window on this machine and complete
+          the Google sign-in or human-verification check. The run continues automatically.
         </div>
       )}
 

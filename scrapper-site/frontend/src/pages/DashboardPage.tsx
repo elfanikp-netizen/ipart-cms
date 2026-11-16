@@ -415,10 +415,10 @@ export default function DashboardPage() {
                 Show browser window
               </label>
             )}
-            {selected?.supports_manual_login && (
+            {(selectedSite?.supports_manual_login ?? selected?.supports_manual_login) && (
               <label className="check">
                 <input type="checkbox" checked={manualLogin} onChange={(e) => setManualLogin(e.target.checked)} />
-                Manual login
+                {site === "google" ? "Sign in to Google before search" : "Manual login"}
               </label>
             )}
             {selected?.supports_debug && (

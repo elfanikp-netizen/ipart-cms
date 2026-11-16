@@ -80,6 +80,7 @@ class SiteVariant:
     output_flag: str = "--output"
     supports_fresh: bool | None = None
     fresh_flag: str | None = None
+    supports_manual_login: bool = False
     input_spec: InputSpec | None = None
     output_columns: tuple[str, ...] = ()
     output_notes: str = ""
@@ -90,6 +91,7 @@ class SiteVariant:
             "label": self.label,
             "script": self.script,
             "supports_fresh": self.supports_fresh,
+            "supports_manual_login": self.supports_manual_login,
             "input": self.input_spec.to_dict() if self.input_spec else None,
             "output_columns": list(self.output_columns),
             "output_notes": self.output_notes,
@@ -178,8 +180,11 @@ class CrawlerSpec:
             args.append(self.headed_flag)
         if params.get("debug") and self.supports_debug:
             args.append("--debug")
-        if params.get("manual_login") and self.supports_manual_login:
+        supports_manual_login = variant.supports_manual_login if variant else self.supports_manual_login
+        if params.get("manual_login") and supports_manual_login:
             args.append("--manual-login")
+        if self.id == "vin-lookup" and variant and variant.key == "google":
+            args += ["--profile", str(self.cwd / ".google-profile")]
         if params.get("resume") and self.id == "ccc":
             args.append("--resume")
         if params.get("resume") and self.id == "pacific-best":
@@ -453,10 +458,11 @@ def _registry() -> dict[str, CrawlerSpec]:
                     input_flag=None,
                     output_flag="-o",
                     supports_fresh=False,
+                    supports_manual_login=True,
                     input_spec=InputSpec(
                         required_headers=("Year", "Make", "Model"),
                         template_headers=("Year", "Make", "Model"),
-                        hint="Each row needs a vehicle Year, Make, and Model.",
+                        hint="Each row needs Year, Make, and Model. If Google blocks sign-in in the crawler window, close it and run open-google-profile.ps1 in scrapper-vins. Sign in there, close Chrome, then retry; the dedicated profile is reused.",
                     ),
                     output_columns=("VIN", "VIN_Source", "VIN_Candidates", "VIN_Status"),
                     output_notes="The original input columns are preserved; VIN, source, candidate matches and lookup status are added.",

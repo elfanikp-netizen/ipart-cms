@@ -18,6 +18,7 @@ from .models import Activity, Run, utcnow
 
 # Lines that mean the script is parked on a Cloudflare / human check
 WAIT_MARKERS = (
+    "waiting_for_google_account_sign_in",
     "verify you are human",
     "human verification",
     "verification page detected",
@@ -25,6 +26,7 @@ WAIT_MARKERS = (
     "cloudflare",
 )
 CLEAR_MARKERS = (
+    "google_account_sign_in_complete",
     "cleared; continuing",
     "cleared;continuing",
     "verification passed",
@@ -55,6 +57,7 @@ class Runner:
         self._pending: set[int] = set()
         self._reserved_ports: set[int] = set()
         self._lock = threading.Lock()
+        self._google_profile_lock = threading.Lock()
 
     # ------------------------------------------------------------------ API
     def start(self) -> None:
@@ -221,11 +224,17 @@ if ($windowCount -eq 0) {{ exit 3 }}
                 spec = get_crawler(run.crawler_id)
                 if spec is None:
                     raise RuntimeError(f"unknown crawler '{run.crawler_id}'")
+                params = json.loads(run.params or "{}")
+                uses_google_profile = run.crawler_id == "vin-lookup" and params.get("site") == "google"
 
             with self._lock:
                 self._pending.discard(run_id)
             cdp_port = self._reserve_cdp_port()
-            self._execute(run_id, cdp_port)
+            if uses_google_profile:
+                with self._google_profile_lock:
+                    self._execute(run_id, cdp_port)
+            else:
+                self._execute(run_id, cdp_port)
         except Exception as exc:  # noqa: BLE001
             with SessionLocal() as db:
                 run = db.get(Run, run_id)
@@ -290,6 +299,8 @@ if ($windowCount -eq 0) {{ exit 3 }}
             if source_file.is_file():
                 shutil.copy2(source_file, workspace / source_file.name)
         for source_dir in spec.cwd.iterdir():
+            if spec.id == "vin-lookup" and params.get("site") == "google":
+                continue
             if source_dir.is_dir() and (
                 "profile" in source_dir.name.casefold() or source_dir.name == "playwright"
             ):

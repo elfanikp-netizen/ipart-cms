@@ -64,6 +64,7 @@ export interface Crawler {
     label: string;
     script: string;
     supports_fresh?: boolean | null;
+    supports_manual_login?: boolean;
     input?: InputRequirements | null;
     output_columns?: string[];
     output_notes?: string;

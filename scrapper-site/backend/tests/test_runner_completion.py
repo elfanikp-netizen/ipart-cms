@@ -13,6 +13,24 @@ from app.runner import Runner, _parse_progress
 
 
 class RunnerCompletionTests(unittest.TestCase):
+    def test_google_sign_in_wait_markers_update_run_waiting_state(self) -> None:
+        runner = Runner()
+        with patch.object(runner, "_set_waiting") as set_waiting:
+            waiting, progress = runner._handle_output_line(
+                17, "WAITING_FOR_GOOGLE_ACCOUNT_SIGN_IN", False, None
+            )
+            self.assertTrue(waiting)
+            self.assertIsNone(progress)
+            set_waiting.assert_called_once_with(17, True)
+
+            set_waiting.reset_mock()
+            waiting, progress = runner._handle_output_line(
+                17, "GOOGLE_ACCOUNT_SIGN_IN_COMPLETE", waiting, progress
+            )
+            self.assertFalse(waiting)
+            self.assertIsNone(progress)
+            set_waiting.assert_called_once_with(17, False)
+
     def test_ccc_lookup_progress_is_parsed(self) -> None:
         self.assertEqual(
             _parse_progress("10:35:05 INFO Progress: lookup 10/101 for 1 matching input row(s)"),
@@ -40,6 +58,25 @@ class RunnerCompletionTests(unittest.TestCase):
 
             self.assertEqual(env["CARID_CDP_PORT"], "35671")
             self.assertIn("CDP_PORT = 35671", (workspace / script.name).read_text(encoding="utf-8"))
+
+    def test_google_run_workspace_does_not_copy_persistent_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "scrapper-vins"
+            project.mkdir()
+            (project / "vin_crawler.py").write_text("print('ready')\n", encoding="utf-8")
+            (project / ".google-profile").mkdir()
+            spec = SimpleNamespace(
+                id="vin-lookup",
+                cwd=project,
+                resolve_script=lambda _site, _input_mode=None: project / "vin_crawler.py",
+            )
+            runner = Runner()
+
+            with patch("app.runner.settings.data_dir", root / "data"):
+                _, workspace, _ = runner._prepare_run_workspace(spec, 123, 35671, {"site": "google"})
+
+            self.assertFalse((workspace / ".google-profile").exists())
 
     def test_successful_exit_persists_success_status_and_activity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -43,6 +43,11 @@ Adding a crawler script means registering it there. VIN Lookup runs with the
 Search, or VIN Decoder in the Site selector.
 Choose **VIN Decoder (vpic.nhtsa.dot.gov)** to upload a workbook with a `VIN`
 column and return each VIN with its decoded model year, make, and model.
+For Google Search, if Google refuses sign-in in the crawler-controlled window,
+run `C:\ELFANI\scrapper-vins\open-google-profile.ps1`, sign in to the dedicated
+Chrome profile, close that Chrome window, then start the Google VIN run with
+**Sign in to Google before search** enabled. Do not leave both windows open on
+the same profile.
 Pacific Best uses `scrapper-pac\.venv`, accepts OEM or PARTSLINK as the search
 column, and supports live browser show/hide during an active run.
 
