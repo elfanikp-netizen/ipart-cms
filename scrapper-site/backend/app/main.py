@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .db import Base, SessionLocal, engine, ensure_database_schema, migrate_user_app_access
 from .models import CccScenario
+from .part_type_seed import initialize_part_types
 from .routers import ccc_scenarios, runs
 from .runner import runner
 
@@ -207,6 +208,7 @@ async def lifespan(app: FastAPI):
     ensure_database_schema()
     migrate_identity_schema()
     migrate_ccc_scenarios()
+    initialize_part_types(engine, settings.data_dir / "Hollander_Interchange_Part_Type_Codes.xlsx")
     Base.metadata.create_all(engine)
     migrate_user_app_access()
     migrate_columns()

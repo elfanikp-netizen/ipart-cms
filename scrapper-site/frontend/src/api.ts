@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Activity, ActivityPage, CccScenario, CccScenarioPage, Crawler, InputPreview, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
+import type { Activity, ActivityPage, CccScenario, CccScenarioPage, CccScenarioPartType, CccScenarioPartTypePage, Crawler, InputPreview, NetworkStatus, QueueStatus, Run, RunLog, User } from "./types";
 
 // Same-origin by default: the Vite dev proxy (and any reverse proxy like ngrok)
 // forwards /api to the backend, so the UI works over the tunnel URL too.
@@ -77,6 +77,16 @@ export const createCccScenario = (data: CccScenarioValues) =>
 export const updateCccScenario = (recordId: number, data: CccScenarioValues) =>
   client.put<CccScenario>(`/api/ccc-scenarios/records/${recordId}`, data).then((r) => r.data);
 export const deleteCccScenario = (recordId: number) => client.delete(`/api/ccc-scenarios/records/${recordId}`).then(() => undefined);
+
+export type CccScenarioPartTypeValues = Pick<CccScenarioPartType, "part_type_code" | "part_type_description" | "subsystem_category" | "series_group" | "reference_notes" | "scenario">;
+export const listCccScenarioPartTypes = (params: { search: string; page: number; page_size: number }) =>
+  client.get<CccScenarioPartTypePage>("/api/ccc-scenarios/part-types", { params }).then((response) => response.data);
+export const createCccScenarioPartType = (data: CccScenarioPartTypeValues) =>
+  client.post<CccScenarioPartType>("/api/ccc-scenarios/part-types", data).then((response) => response.data);
+export const updateCccScenarioPartType = (recordId: number, data: CccScenarioPartTypeValues) =>
+  client.put<CccScenarioPartType>(`/api/ccc-scenarios/part-types/${recordId}`, data).then((response) => response.data);
+export const deleteCccScenarioPartType = (recordId: number) =>
+  client.delete(`/api/ccc-scenarios/part-types/${recordId}`).then(() => undefined);
 
 // ---------------------------------------------------------------- crawlers & runs
 export const listCrawlers = () => client.get<Crawler[]>("/api/crawlers").then((r) => r.data);

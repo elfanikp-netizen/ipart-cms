@@ -10,6 +10,9 @@
 }
 .menu-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ccc-page { min-width: 0; }
+.ccc-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.ccc-tabs button { padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.ccc-tabs button[aria-selected="true"] { border-bottom-color: var(--focus); color: var(--text); font-weight: 600; }
 .ccc-edit-form { margin: 12px 0 18px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .ccc-form-heading, .ccc-record-toolbar, .ccc-row-actions, .ccc-pagination {
   display: flex;

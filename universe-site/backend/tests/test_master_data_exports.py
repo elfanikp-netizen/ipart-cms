@@ -16,10 +16,12 @@ from app.routers.catalogs import (
 from app.routers.oem import export_oems_by_list, row_out
 
 
-def upload_workbook(headers, values):
+def upload_workbook(headers, values, *additional_rows):
     workbook = Workbook()
     workbook.active.append(headers)
     workbook.active.append(values)
+    for row in additional_rows:
+        workbook.active.append(row)
     content = BytesIO()
     workbook.save(content)
     workbook.close()
@@ -88,6 +90,28 @@ class MasterDataExportTests(unittest.TestCase):
         rows = response_rows(response)
         self.assertEqual(rows[0], ("PARTSLINK", "OEM", "Description"))
         self.assertEqual(rows[1], ("P-100", "OEM-1", "OEM description"))
+
+    def test_catalog_list_export_groups_by_uploaded_oem(self):
+        target = SimpleNamespace(partslink="P-100", partslink_key="p-100", description="Part")
+        first = SimpleNamespace(oem="OEM-1", oem_key="oem-1", description="One", partslinks=[target])
+        second = SimpleNamespace(oem="OEM-2", oem_key="oem-2", description="Two", partslinks=[target])
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [first, second]
+        workbook = Workbook()
+        workbook.active.append(["OEM"])
+        for number in ["OEM-1", "OEM-2", "OEM-1"]:
+            workbook.active.append([number])
+        content = BytesIO()
+        workbook.save(content)
+        workbook.close()
+        content.seek(0)
+
+        with patch("app.routers.catalogs.log_activity"):
+            response = export_catalog_by_list(
+                "partslinks", UploadFile(filename="list.xlsx", file=content), "oem", session, SimpleNamespace(id=1),
+            )
+
+        self.assertEqual([row[1] for row in response_rows(response)[1:]], ["OEM-1", "OEM-2"])
 
     def test_oem_export_can_select_partslink_list_and_expand_vin_fitment(self):
         vehicle = SimpleNamespace(year=2020, make="Ford", model="Explorer")
@@ -177,6 +201,67 @@ class MasterDataExportTests(unittest.TestCase):
         result = row_out(oem, {(4, 3): True})
 
         self.assertTrue(result.vins[0].is_valid)
+
+    def test_oem_list_export_groups_each_selected_type(self):
+        oem = SimpleNamespace(
+            id=1, oem="OEM-1", oem_key="oem-1", description="Part", notes="", vins=[],
+            partslinks=[], interchanges=[],
+        )
+        for list_type, header, values in (
+            ("oem", "OEM", ("OEM-1", "OEM-2")),
+            ("partslink", "Partslink", ("P-1", "P-2")),
+            ("interchange", "Interchange", ("I-1", "I-2")),
+        ):
+            with self.subTest(list_type=list_type):
+                if list_type == "oem":
+                    items = [oem, SimpleNamespace(**{**vars(oem), "id": 2, "oem": values[1], "oem_key": values[1].lower()})]
+                else:
+                    items = [SimpleNamespace(**{f"{list_type}_key": value.lower(), "oems": [oem]}) for value in values]
+                session = MagicMock()
+                session.scalars.return_value.all.return_value = items
+                with patch("app.routers.oem.log_activity"), patch("app.routers.oem.load_fitment_validity", return_value={}):
+                    grouped = export_oems_by_list(
+                        upload_workbook([header], [values[0]], [values[1]], [values[0]], ["missing"], ["missing"]),
+                        list_type, session, SimpleNamespace(id=1),
+                    )
+                    expanded = export_oems_by_list(
+                        upload_workbook([header], [values[0]], [values[1]], [values[0]], ["missing"], ["missing"]),
+                        list_type, session, SimpleNamespace(id=1), group_by_type=False,
+                    )
+                self.assertEqual([row[0] for row in response_rows(grouped)[1:]], [*values, "missing"])
+                self.assertEqual(len(response_rows(expanded)), 6)
+
+    def test_catalog_list_export_groups_each_selected_type(self):
+        for kind, field in (("partslinks", "partslink"), ("interchanges", "interchange")):
+            for list_type, header in (("oem", "OEM"), ("partslink", "Partslink"), ("interchange", "Interchange")):
+                with self.subTest(kind=kind, list_type=list_type):
+                    target = SimpleNamespace(**{field: "TARGET", f"{field}_key": "target", "description": "Part"})
+                    oems = [SimpleNamespace(oem=f"OEM-{index}", oem_key=f"oem-{index}", description="", **{kind: [target]}) for index in (1, 2)]
+                    if list_type == "oem":
+                        items, values = oems, ["OEM-1", "OEM-2"]
+                    elif list_type == field:
+                        items = [SimpleNamespace(**{field: value, f"{field}_key": value.lower(), "description": "Part", "oems": [oem]}) for value, oem in zip(("SOURCE-1", "SOURCE-2"), oems)]
+                        for item, oem in zip(items, oems):
+                            setattr(oem, kind, [item])
+                        values = ["SOURCE-1", "SOURCE-2"]
+                    else:
+                        values = ["SOURCE-1", "SOURCE-2"]
+                        items = [SimpleNamespace(**{f"{list_type}_key": value.lower(), "oems": [oems[0]]}) for value in values]
+                    session = MagicMock()
+                    session.scalars.return_value.all.return_value = items
+                    with patch("app.routers.catalogs.log_activity"):
+                        grouped = export_catalog_by_list(
+                            kind, upload_workbook([header], [values[0]], [values[1]], [values[0]], ["missing"], ["missing"]),
+                            list_type, session, SimpleNamespace(id=1),
+                        )
+                        expanded = export_catalog_by_list(
+                            kind, upload_workbook([header], [values[0]], [values[1]], [values[0]], ["missing"], ["missing"]),
+                            list_type, session, SimpleNamespace(id=1), group_by_type=False,
+                        )
+                    rows = response_rows(grouped)[1:]
+                    source_column = 1 if list_type == "oem" else 0
+                    self.assertEqual([row[source_column] for row in rows], [*values, "missing"])
+                    self.assertEqual(len(response_rows(expanded)), 6)
 
     def test_catalog_list_export_groups_by_catalog_type_and_can_expand_mappings(self):
         target = SimpleNamespace(partslink="P-100", partslink_key="p-100", description="Catalog description")

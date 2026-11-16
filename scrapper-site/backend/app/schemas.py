@@ -53,6 +53,15 @@ class CccScenarioIn(BaseModel):
     scenario: str = ""
 
 
+class CccScenarioPartTypeIn(BaseModel):
+    part_type_code: str
+    part_type_description: str = ""
+    subsystem_category: str = ""
+    series_group: str = ""
+    reference_notes: str = ""
+    scenario: str = ""
+
+
 class ActivityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

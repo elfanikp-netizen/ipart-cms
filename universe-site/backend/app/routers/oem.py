@@ -460,9 +460,11 @@ def export_oems_by_list(
     base_headers = ["OEM", "VIN", "Year", "Make", "Model", "Partslink", "Interchange", "Is Valid", "Description", "Notes"]
     sheet.append(base_headers if list_type == "oem" else [list_type.upper(), *base_headers])
     exported_count = 0
-    seen_oem_keys: set[str] = set()
-    seen_missing_keys: set[str] = set()
+    seen_list_keys: set[str] = set()
     for uploaded_number, number_key, vin_key in requested_rows:
+        if group_by_type and number_key in seen_list_keys:
+            continue
+        seen_list_keys.add(number_key)
         if list_type == "oem":
             item = items_by_key.get(number_key)
             matching_oems = [item] if item is not None else []
@@ -471,18 +473,14 @@ def export_oems_by_list(
             matching_oems = sorted(source_item.oems, key=lambda value: value.oem_key) if source_item else []
 
         if not matching_oems:
-            if group_by_type and number_key in seen_missing_keys:
-                continue
-            seen_missing_keys.add(number_key)
             row = [uploaded_number, None, None, None, None, None, None, None, None, None]
             sheet.append(row if list_type == "oem" else [uploaded_number, *row])
             exported_count += 1
             continue
 
+        if group_by_type:
+            matching_oems = matching_oems[:1]
         for item in matching_oems:
-            if group_by_type and item.oem_key in seen_oem_keys:
-                continue
-            seen_oem_keys.add(item.oem_key)
             vins = sorted(
                 item.vins,
                 key=lambda value: (not fitment_validity.get((item.id, value.id), False), value.vin_key),

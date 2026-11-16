@@ -3,8 +3,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..deps import get_current_user, get_db, log_activity
-from ..models import CccScenario, User
-from ..schemas import CccScenarioIn
+from ..models import CccScenario, CccScenarioPartType, User
+from ..schemas import CccScenarioIn, CccScenarioPartTypeIn
 
 router = APIRouter(prefix="/api/ccc-scenarios", tags=["CCC scenarios"])
 PAGE_SIZE_MAX = 100
@@ -113,3 +113,72 @@ def delete_record(
     db.delete(item)
     db.commit()
     log_activity(db, user, "delete_ccc_scenario", f"deleted Part Code {part_code}")
+
+
+def part_type_out(item: CccScenarioPartType) -> dict:
+    return {column.name: getattr(item, column.name) for column in CccScenarioPartType.__table__.columns}
+
+
+def normalize_part_type(payload: CccScenarioPartTypeIn) -> dict[str, str]:
+    values = {field: value.strip() for field, value in payload.model_dump().items()}
+    values["part_type_code"] = " ".join(values["part_type_code"].split())
+    if not values["part_type_code"] or len(values["part_type_code"]) > 150:
+        raise HTTPException(422, "Part Type Code is required and must be 150 characters or fewer")
+    return values
+
+
+@router.get("/part-types")
+def list_part_types(
+    search: str = "",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=PAGE_SIZE_MAX),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    stmt = select(CccScenarioPartType)
+    if search.strip():
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(or_(*(getattr(CccScenarioPartType, field).ilike(pattern) for field in (
+            "part_type_code", "part_type_description", "subsystem_category", "series_group", "reference_notes", "scenario",
+        ))))
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    items = db.scalars(stmt.order_by(CccScenarioPartType.part_type_code, CccScenarioPartType.id)
+                       .offset((page - 1) * page_size).limit(page_size)).all()
+    return {"items": [part_type_out(item) for item in items], "page": page, "page_size": page_size,
+            "total": total, "pages": (total + page_size - 1) // page_size}
+
+
+@router.post("/part-types", status_code=201)
+def create_part_type(payload: CccScenarioPartTypeIn, db: Session = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    item = CccScenarioPartType(**normalize_part_type(payload))
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    log_activity(db, user, "create_ccc_part_type", f"created Part Type Code {item.part_type_code}")
+    return part_type_out(item)
+
+
+@router.put("/part-types/{record_id}")
+def update_part_type(record_id: int, payload: CccScenarioPartTypeIn, db: Session = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    item = db.get(CccScenarioPartType, record_id)
+    if item is None:
+        raise HTTPException(404, "Part Type Code record not found")
+    for field, value in normalize_part_type(payload).items():
+        setattr(item, field, value)
+    db.commit()
+    db.refresh(item)
+    log_activity(db, user, "update_ccc_part_type", f"updated Part Type Code {item.part_type_code}")
+    return part_type_out(item)
+
+
+@router.delete("/part-types/{record_id}", status_code=204)
+def delete_part_type(record_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    item = db.get(CccScenarioPartType, record_id)
+    if item is None:
+        raise HTTPException(404, "Part Type Code record not found")
+    part_type_code = item.part_type_code
+    db.delete(item)
+    db.commit()
+    log_activity(db, user, "delete_ccc_part_type", f"deleted Part Type Code {part_type_code}")

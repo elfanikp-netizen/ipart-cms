@@ -8,6 +8,7 @@ import {
   updateCccScenario,
 } from "../api";
 import type { CccScenario, CccScenarioPage } from "../types";
+import CccScenarioPartTypePage from "./CccScenarioPartTypePage";
 import "./ccc-scenario.css";
 
 const PAGE_SIZE = 25;
@@ -15,6 +16,19 @@ type ScenarioValues = Pick<CccScenario, "part_code" | "part_description" | "part
 const EMPTY_VALUES: ScenarioValues = { part_code: "", part_description: "", part_family: "", scenario: "" };
 
 export default function CccScenarioPage() {
+  const [tab, setTab] = useState<"part-code" | "part-type">("part-code");
+  return (
+    <>
+      <div className="ccc-tabs" role="tablist" aria-label="CCC Scenario type">
+        <button type="button" role="tab" aria-selected={tab === "part-code"} onClick={() => setTab("part-code")}>Part Code</button>
+        <button type="button" role="tab" aria-selected={tab === "part-type"} onClick={() => setTab("part-type")}>Part Type Code</button>
+      </div>
+      {tab === "part-code" ? <PartCodePage /> : <CccScenarioPartTypePage />}
+    </>
+  );
+}
+
+function PartCodePage() {
   const [rows, setRows] = useState<CccScenario[]>([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(0);

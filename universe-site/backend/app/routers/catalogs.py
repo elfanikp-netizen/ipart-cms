@@ -539,9 +539,11 @@ def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Sess
         if source_is_oem else [list_type.upper(), target_label, "OEM", "Description"]
     )
     exported = 0
-    seen_type_keys: set[str] = set()
-    seen_missing_keys: set[str] = set()
+    seen_list_keys: set[str] = set()
     for uploaded_number, number_key in requested:
+        if group_by_type and number_key in seen_list_keys:
+            continue
+        seen_list_keys.add(number_key)
         source_item = source_items_by_key.get(number_key)
         if source_is_oem:
             oems = [source_item] if source_item else []
@@ -559,11 +561,9 @@ def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Sess
 
         if target_catalogs:
             target_catalogs.sort(key=lambda value: getattr(value, f"{spec.value_field}_key"))
+            if group_by_type:
+                target_catalogs = target_catalogs[:1]
             for target_item in target_catalogs:
-                type_key = getattr(target_item, f"{spec.value_field}_key")
-                if group_by_type and type_key in seen_type_keys:
-                    continue
-                seen_type_keys.add(type_key)
                 linked_oems = sorted(
                     [oem for oem in oems if target_item in getattr(oem, target_relationship)],
                     key=lambda value: value.oem_key,
@@ -580,17 +580,9 @@ def export_catalog_by_list(kind: str, file: UploadFile, list_type: str, db: Sess
                     sheet.append(row)
                     exported += 1
         elif not source_is_oem:
-            missing_key = f"{list_type}:{number_key}"
-            if group_by_type and missing_key in seen_missing_keys:
-                continue
-            seen_missing_keys.add(missing_key)
             sheet.append([uploaded_number, None, None, None])
             exported += 1
         else:
-            missing_key = f"oem:{number_key}"
-            if group_by_type and missing_key in seen_missing_keys:
-                continue
-            seen_missing_keys.add(missing_key)
             sheet.append([None, uploaded_number, None])
             exported += 1
     log_activity(db, user, f"export_{kind}_by_list", f"exported {exported} mappings from a {list_type} list")

@@ -85,3 +85,18 @@ class CccScenario(Base):
     scenario = Column(Text, nullable=False, default="")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class CccScenarioPartType(Base):
+    __tablename__ = "ccc_scenario_part_type"
+    __table_args__ = {"schema": APP_SCHEMA} if APP_SCHEMA else {}
+
+    id = Column(Integer, primary_key=True)
+    part_type_code = Column(String(150), nullable=False, index=True)
+    part_type_description = Column(Text, nullable=False, default="")
+    subsystem_category = Column(Text, nullable=False, default="")
+    series_group = Column(Text, nullable=False, default="")
+    reference_notes = Column(Text, nullable=False, default="")
+    scenario = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

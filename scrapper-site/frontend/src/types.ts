@@ -43,6 +43,26 @@ export interface CccScenarioPage {
   pages: number;
 }
 
+export interface CccScenarioPartType {
+  id: number;
+  part_type_code: string;
+  part_type_description: string;
+  subsystem_category: string;
+  series_group: string;
+  reference_notes: string;
+  scenario: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CccScenarioPartTypePage {
+  items: CccScenarioPartType[];
+  page: number;
+  page_size: number;
+  total: number;
+  pages: number;
+}
+
 export interface Crawler {
   id: string;
   name: string;
