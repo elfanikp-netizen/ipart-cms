@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { Crawler, QueueStatus, Run } from "../types";
-import { continueRun, createRun, downloadCrawlerTemplate, errorText, listCrawlers, listRuns, previewInput, queueStatus, stopRun } from "../api";
+import type { CccScenarioPartType, Crawler, QueueStatus, Run } from "../types";
+import { continueRun, createRun, downloadCrawlerTemplate, errorText, listCccScenarioPartTypeOptions, listCrawlers, listRuns, previewInput, queueStatus, stopRun } from "../api";
 import ProgressBar from "../components/ProgressBar";
 import CrawlerSelect from "../components/CrawlerSelect";
 import TableSearchPagination, { useTableSearch } from "../components/TableSearchPagination";
@@ -40,6 +40,10 @@ export default function DashboardPage() {
   const [column, setColumn] = useState("");
   const [site, setSite] = useState("");
   const [searchAction, setSearchAction] = useState("vin_oem");
+  const [partTypes, setPartTypes] = useState<Pick<CccScenarioPartType, "id" | "part_type_code" | "part_type_description" | "scenario">[]>([]);
+  const [partTypeIds, setPartTypeIds] = useState<number[]>([]);
+  const [partTypeSearch, setPartTypeSearch] = useState("");
+  const [partTypeLoading, setPartTypeLoading] = useState(false);
   const [description, setDescription] = useState("");
   const [limit, setLimit] = useState(0);
   const [delay, setDelay] = useState(1.5);
@@ -62,7 +66,10 @@ export default function DashboardPage() {
   const selectedSite = selected?.sites.find((s) => s.key === site);
   const defaultInputRequirements = selectedSite?.input ?? selected?.input;
   const cccScenarioMode = selected?.id === "ccc" && searchAction === "vin_partslink_scenario";
-  const inputRequirements = cccScenarioMode && defaultInputRequirements
+  const partTypeMode = selected?.id === "ccc" && searchAction === "vin_part_type_scenario";
+  const inputRequirements = partTypeMode && defaultInputRequirements
+    ? { ...defaultInputRequirements, required_headers: ["VIN"], header_alternatives: [], template_headers: ["VIN"], hint: "Use one VIN per row." }
+    : cccScenarioMode && defaultInputRequirements
     ? {
         ...defaultInputRequirements,
         required_headers: ["VIN", "PARTSLINK"],
@@ -78,7 +85,7 @@ export default function DashboardPage() {
   const outputSearchColumn = resolvePreviewColumn(inputPreview?.headers ?? [], column.trim())
     || column.trim()
     || "selected input column";
-  const displayedOutputColumns = outputColumns.map((name) =>
+  const displayedOutputColumns = [...outputColumns, ...(partTypeMode ? ["Part Type Code", "Part Type Description", "Input Part Type Description", "Scenario"] : [])].map((name) =>
     name.replace("{search_column}", outputSearchColumn)
   );
   const supportsFresh = selectedSite?.supports_fresh ?? selected?.supports_fresh ?? false;
@@ -110,6 +117,20 @@ export default function DashboardPage() {
       })
       .catch((e) => setError(errorText(e)));
   }, []);
+
+  useEffect(() => {
+    if (!partTypeMode) return;
+    let active = true;
+    setPartTypeLoading(true);
+    listCccScenarioPartTypeOptions().then((items) => {
+      if (active) {
+        setPartTypes(items);
+        setPartTypeIds((current) => current.filter((id) => items.some((item) => item.id === id && item.scenario.split(",").some((phrase) => phrase.trim()))));
+      }
+    }).catch((reason) => { if (active) { setPartTypes([]); setPartTypeIds([]); setError(errorText(reason)); } })
+      .finally(() => { if (active) setPartTypeLoading(false); });
+    return () => { active = false; };
+  }, [partTypeMode]);
 
   useEffect(() => {
     if (!file || !crawlerId) {
@@ -145,7 +166,7 @@ export default function DashboardPage() {
 
   const queueRun = async (lockAcquired = false) => {
     if (startRunLock.current && !lockAcquired) return;
-    if (!file || !crawlerId || inputPreview?.valid !== true) {
+    if (!file || !crawlerId || inputPreview?.valid !== true || (partTypeMode && !partTypeIds.length)) {
       startRunLock.current = false;
       setSubmitting(false);
       return;
@@ -158,7 +179,7 @@ export default function DashboardPage() {
       const signature = JSON.stringify({
         crawlerId,
         file: [file.name, file.size, file.lastModified],
-        column, site, searchAction, description, limit, delay, fresh, show, debug, manualLogin,
+        column, site, searchAction, partTypeIds, description, limit, delay, fresh, show, debug, manualLogin,
       });
       const storageKey = "scrapper.pending-run-request";
       let requestKey: string = crypto.randomUUID();
@@ -170,7 +191,7 @@ export default function DashboardPage() {
         // The in-memory lock still prevents repeated clicks if session storage is unavailable.
       }
       const run = await createRun(crawlerId, file, {
-        column, site, search_action: searchAction, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
+        column, site, search_action: searchAction, part_type_ids: JSON.stringify(partTypeIds), description, limit, delay, fresh, show, debug, manual_login: manualLogin,
       }, requestKey);
       try {
         const pending = JSON.parse(sessionStorage.getItem(storageKey) || "null") as { key?: string } | null;
@@ -188,7 +209,7 @@ export default function DashboardPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (startRunLock.current || !file || !crawlerId || inputPreview?.valid !== true) return;
+    if (startRunLock.current || !file || !crawlerId || inputPreview?.valid !== true || (partTypeMode && !partTypeIds.length)) return;
     startRunLock.current = true;
     setSubmitting(true);
     setError(null);
@@ -277,10 +298,25 @@ export default function DashboardPage() {
                 <select value={searchAction} onChange={(event) => setSearchAction(event.target.value)}>
                   <option value="vin_oem">By VIN &amp; OEM</option>
                   <option value="vin_partslink_scenario">By VIN &amp; PARTSLINK (Scenario)</option>
+                  <option value="vin_part_type_scenario">By VIN &amp; PART TYPE (Scenario)</option>
                 </select>
               </label>
             </div>
           )}
+          {partTypeMode && <fieldset className="part-type-selector">
+            <legend>Part Type Codes</legend>
+            <input type="search" value={partTypeSearch} onChange={(event) => setPartTypeSearch(event.target.value)} placeholder="Search part type codes" aria-label="Search part type codes" />
+            <span className="muted">{partTypeIds.length} selected</span>
+            <div className="part-type-options">
+              {partTypeLoading ? <p>Loading part types...</p> : partTypes.filter((item) => `${item.part_type_code} ${item.part_type_description} ${item.scenario}`.toLocaleLowerCase().includes(partTypeSearch.trim().toLocaleLowerCase())).map((item) => {
+                const available = item.scenario.split(",").some((phrase) => phrase.trim());
+                return <label className="part-type-option" key={item.id}>
+                  <input type="checkbox" disabled={!available} checked={partTypeIds.includes(item.id)} onChange={(event) => setPartTypeIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} />
+                  <span><strong>{item.part_type_code}</strong> {item.part_type_description}<small>{available ? item.scenario : "No scenario"}</small></span>
+                </label>;
+              })}
+            </div>
+          </fieldset>}
           {selected && inputRequirements && (
             <>
               <div className="workbook-tabs" role="group" aria-label="Workbook information">
@@ -430,7 +466,7 @@ export default function DashboardPage() {
           </div>
           {selected?.notes && <p className="notes">ℹ️ {selected.notes}</p>}
           {error && <p className="error">{error}</p>}
-          <button className="primary" type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true}>
+          <button className="primary" type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true || (partTypeMode && (partTypeLoading || !partTypeIds.length))}>
             {submitting ? "Uploading…" : "▶ Start run"}
           </button>
         </form>

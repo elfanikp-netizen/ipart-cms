@@ -163,8 +163,8 @@ class CrawlerSpec:
         description = (params.get("description") or "").strip()
         if description and self.supports_description:
             args += ["--description", description]
-        if self.id == "ccc" and params.get("search_action") == "vin_partslink_scenario":
-            args += ["--search-action", "vin_partslink_scenario"]
+        if self.id == "ccc" and params.get("search_action") in {"vin_partslink_scenario", "vin_part_type_scenario"}:
+            args += ["--search-action", params["search_action"]]
         limit = int(params.get("limit") or 0)
         if limit > 0 and self.supports_limit:
             args += ["--limit", str(limit)]
@@ -288,7 +288,7 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_description=True,
             description_default="A/M: CAPA",
             sites=(SiteVariant(key="cccone", label="CCC One (cccone.com)", script="crawler.py"),),
-            notes="CCC credentials come from its .env. Choose By VIN & OEM or By VIN & PARTSLINK (Scenario).",
+            notes="CCC credentials come from its .env. Choose a VIN search action and its required input.",
             input_spec=InputSpec(
                 required_headers=("VIN", "OEM"),
                 template_headers=("VIN", "OEM"),

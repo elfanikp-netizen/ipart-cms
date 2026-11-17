@@ -10,7 +10,7 @@ from zipfile import is_zipfile
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,7 +28,7 @@ from ..input_files import (
     resolve_column_header,
     validate_input,
 )
-from ..models import Activity, CccScenario, Run, User, utcnow
+from ..models import Activity, CccScenario, CccScenarioPartType, Run, User, utcnow
 from ..runner import runner
 from ..schemas import ActivityPageOut, QueueOut, RunOut
 
@@ -37,6 +37,7 @@ router = APIRouter(prefix="/api", tags=["runs"])
 ALLOWED_INPUT_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
 CCC_SEARCH_BY_VIN_OEM = "vin_oem"
 CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO = "vin_partslink_scenario"
+CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO = "vin_part_type_scenario"
 LOG_TAIL_BYTES = 256 * 1024
 VPN_ADAPTER_PATTERN = r"(?i)(vpn|wireguard|wintun|tap-windows|openvpn|nordlynx|tailscale|zerotier|anyconnect|fortinet|forticlient|globalprotect|proton|mullvad|expressvpn|nordvpn)"
 
@@ -210,6 +211,51 @@ def add_ccc_scenario_column(content: bytes, suffix: str, scenarios: dict[str, st
         workbook.close()
 
 
+def part_type_input_rows(content: bytes, suffix: str) -> tuple[list[str], list[str]]:
+    headers, rows = read_ccc_scenario_input(content, suffix)
+    if "vin" not in headers:
+        return ["Missing required header(s): VIN."], []
+    index = headers.index("vin")
+    vins = []
+    errors = []
+    for row_number, row in rows:
+        if not any(value is not None and str(value).strip() for value in row):
+            continue
+        vin = str(row[index] or "").strip() if index < len(row) else ""
+        if not vin:
+            errors.append(f"Row {row_number}: VIN is empty.")
+        else:
+            vins.append(vin)
+    if not vins and not errors:
+        errors.append("The first worksheet has no VIN data rows.")
+    return errors, vins
+
+
+def part_type_run_workbook(vins: list[str], records: list[CccScenarioPartType]) -> bytes:
+    workbook = Workbook()
+    try:
+        sheet = workbook.active
+        sheet.append(["VIN", "Part Type Code", "Part Type Description", "Scenario"])
+        for vin in vins:
+            for record in records:
+                for phrase in (value.strip() for value in record.scenario.split(",")):
+                    if phrase:
+                        sheet.append([vin, record.part_type_code, record.part_type_description, phrase])
+        output = BytesIO()
+        workbook.save(output)
+        return output.getvalue()
+    finally:
+        workbook.close()
+
+
+@router.get("/ccc-scenarios/part-type-options")
+def part_type_options(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    records = db.scalars(select(CccScenarioPartType).order_by(CccScenarioPartType.part_type_code, CccScenarioPartType.id)).all()
+    records.sort(key=lambda item: not any(phrase.strip() for phrase in (item.scenario or "").split(",")))
+    return [{"id": item.id, "part_type_code": item.part_type_code,
+             "part_type_description": item.part_type_description, "scenario": item.scenario} for item in records]
+
+
 @router.get("/crawlers")
 def list_crawlers(_: User = Depends(get_current_user)):
     return [spec.to_dict() for spec in CRAWLERS.values()]
@@ -231,6 +277,9 @@ def download_input_template(
             template_headers=("VIN", "PARTSLINK"),
             hint="Use one vehicle and PARTSLINK value per row. CCC Scenario is filled automatically from the PARTSLINK code.",
         ))
+    elif crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO:
+        spec = replace(spec, input_spec=InputSpec(required_headers=("VIN",), template_headers=("VIN",),
+                                                  hint="Use one VIN per row."))
     variant = spec.resolve_site(site)
     site_name = f"-{variant.key}" if variant else ""
     return StreamingResponse(
@@ -266,6 +315,8 @@ async def preview_input(
             errors = ["By VIN & PARTSLINK (Scenario) requires an .xlsx or .xlsm workbook."]
         else:
             errors, _ = resolve_ccc_scenarios(content, suffix, db)
+    elif crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO:
+        errors, _ = part_type_input_rows(content, suffix)
     else:
         errors = validate_input(spec, site, column, headers, has_data)
     return {"headers": headers, "valid": not errors, "errors": errors}
@@ -410,6 +461,7 @@ async def create_run(
     column: str = Form(""),
     site: str = Form(""),
     search_action: str = Form(CCC_SEARCH_BY_VIN_OEM),
+    part_type_ids: str = Form("[]"),
     description: str = Form(""),
     limit: int = Form(0),
     delay: float = Form(1.5),
@@ -436,6 +488,7 @@ async def create_run(
     if crawler_id == "ccc" and search_action not in {
         CCC_SEARCH_BY_VIN_OEM,
         CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO,
+        CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO,
     }:
         raise HTTPException(400, "Unknown CCC search action")
     if crawler_id != "ccc" and search_action != CCC_SEARCH_BY_VIN_OEM:
@@ -454,10 +507,24 @@ async def create_run(
     except Exception as error:
         raise HTTPException(400, f"Could not read input workbook: {error}") from error
     scenario_mapping = {}
+    part_types = []
     if crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO:
         if suffix not in {".xlsx", ".xlsm"}:
             raise HTTPException(400, "By VIN & PARTSLINK (Scenario) requires an .xlsx or .xlsm workbook")
         input_errors, scenario_mapping = resolve_ccc_scenarios(file_content, suffix, db)
+    elif crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO:
+        input_errors, vins = part_type_input_rows(file_content, suffix)
+        try:
+            selected_ids = json.loads(part_type_ids)
+            if not isinstance(selected_ids, list) or not selected_ids or any(type(value) is not int or value <= 0 for value in selected_ids):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Select at least one valid Part Type Code")
+        selected_ids = set(selected_ids)
+        part_types = db.scalars(select(CccScenarioPartType).where(CccScenarioPartType.id.in_(selected_ids))
+                                .order_by(CccScenarioPartType.part_type_code, CccScenarioPartType.id)).all()
+        if len(part_types) != len(selected_ids) or any(not any(phrase.strip() for phrase in record.scenario.split(",")) for record in part_types):
+            raise HTTPException(400, "Selected Part Type Codes must exist and have a scenario")
     else:
         input_errors = validate_input(spec, site, column, headers, has_data)
     if input_errors:
@@ -482,6 +549,7 @@ async def create_run(
         "debug": debug,
         "manual_login": manual_login,
         "original_filename": file.filename,
+        "part_type_ids": [record.id for record in part_types],
     }
 
     run = Run(
@@ -508,9 +576,11 @@ async def create_run(
     run_dir = settings.data_dir / "runs" / str(run.id)
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
-        input_path = run_dir / f"input{suffix}"
+        input_path = run_dir / ("input.xlsx" if part_types else f"input{suffix}")
         if scenario_mapping:
             file_content = add_ccc_scenario_column(file_content, suffix, scenario_mapping)
+        elif part_types:
+            file_content = part_type_run_workbook(vins, part_types)
         input_path.write_bytes(file_content)
 
         run.input_path = str(input_path)

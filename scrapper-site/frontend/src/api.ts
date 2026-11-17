@@ -81,6 +81,8 @@ export const deleteCccScenario = (recordId: number) => client.delete(`/api/ccc-s
 export type CccScenarioPartTypeValues = Pick<CccScenarioPartType, "part_type_code" | "part_type_description" | "subsystem_category" | "series_group" | "reference_notes" | "scenario">;
 export const listCccScenarioPartTypes = (params: { search: string; page: number; page_size: number }) =>
   client.get<CccScenarioPartTypePage>("/api/ccc-scenarios/part-types", { params }).then((response) => response.data);
+export const listCccScenarioPartTypeOptions = () =>
+  client.get<Pick<CccScenarioPartType, "id" | "part_type_code" | "part_type_description" | "scenario">[]>("/api/ccc-scenarios/part-type-options").then((response) => response.data);
 export const createCccScenarioPartType = (data: CccScenarioPartTypeValues) =>
   client.post<CccScenarioPartType>("/api/ccc-scenarios/part-types", data).then((response) => response.data);
 export const updateCccScenarioPartType = (recordId: number, data: CccScenarioPartTypeValues) =>
