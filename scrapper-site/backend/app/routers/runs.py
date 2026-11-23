@@ -38,8 +38,13 @@ ALLOWED_INPUT_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
 CCC_SEARCH_BY_VIN_OEM = "vin_oem"
 CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO = "vin_partslink_scenario"
 CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO = "vin_part_type_scenario"
+CCC_SEARCH_BY_VIN_OEM_VENDORS = "vin_oem_vendors"
 LOG_TAIL_BYTES = 256 * 1024
 VPN_ADAPTER_PATTERN = r"(?i)(vpn|wireguard|wintun|tap-windows|openvpn|nordlynx|tailscale|zerotier|anyconnect|fortinet|forticlient|globalprotect|proton|mullvad|expressvpn|nordvpn)"
+
+
+def valid_vendor_match(value: str) -> bool:
+    return any(term.replace("*", "").strip() for term in value.split(","))
 
 
 def get_db():
@@ -296,6 +301,7 @@ async def preview_input(
     column: str = Form(""),
     site: str = Form(""),
     search_action: str = Form(CCC_SEARCH_BY_VIN_OEM),
+    vendor_match: str = Form(""),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
@@ -317,6 +323,10 @@ async def preview_input(
             errors, _ = resolve_ccc_scenarios(content, suffix, db)
     elif crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO:
         errors, _ = part_type_input_rows(content, suffix)
+    elif crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_OEM_VENDORS:
+        errors = validate_input(spec, site, column, headers, has_data)
+        if not valid_vendor_match(vendor_match):
+            errors.append("Enter at least one vendor name to match.")
     else:
         errors = validate_input(spec, site, column, headers, has_data)
     return {"headers": headers, "valid": not errors, "errors": errors}
@@ -462,6 +472,7 @@ async def create_run(
     site: str = Form(""),
     search_action: str = Form(CCC_SEARCH_BY_VIN_OEM),
     part_type_ids: str = Form("[]"),
+    vendor_match: str = Form(""),
     description: str = Form(""),
     limit: int = Form(0),
     delay: float = Form(1.5),
@@ -489,6 +500,7 @@ async def create_run(
         CCC_SEARCH_BY_VIN_OEM,
         CCC_SEARCH_BY_VIN_PARTSLINK_SCENARIO,
         CCC_SEARCH_BY_VIN_PART_TYPE_SCENARIO,
+        CCC_SEARCH_BY_VIN_OEM_VENDORS,
     }:
         raise HTTPException(400, "Unknown CCC search action")
     if crawler_id != "ccc" and search_action != CCC_SEARCH_BY_VIN_OEM:
@@ -525,6 +537,10 @@ async def create_run(
                                 .order_by(CccScenarioPartType.part_type_code, CccScenarioPartType.id)).all()
         if len(part_types) != len(selected_ids) or any(not any(phrase.strip() for phrase in record.scenario.split(",")) for record in part_types):
             raise HTTPException(400, "Selected Part Type Codes must exist and have a scenario")
+    elif crawler_id == "ccc" and search_action == CCC_SEARCH_BY_VIN_OEM_VENDORS:
+        input_errors = validate_input(spec, site, column, headers, has_data)
+        if not valid_vendor_match(vendor_match):
+            input_errors.append("Enter at least one vendor name to match")
     else:
         input_errors = validate_input(spec, site, column, headers, has_data)
     if input_errors:
@@ -550,6 +566,9 @@ async def create_run(
         "manual_login": manual_login,
         "original_filename": file.filename,
         "part_type_ids": [record.id for record in part_types],
+        "part_types": [{"code": record.part_type_code, "description": record.part_type_description,
+                "scenario": record.scenario} for record in part_types],
+        "vendor_match": vendor_match.strip() if isinstance(vendor_match, str) else "",
     }
 
     run = Run(

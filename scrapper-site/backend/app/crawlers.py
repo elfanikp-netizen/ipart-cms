@@ -163,8 +163,11 @@ class CrawlerSpec:
         description = (params.get("description") or "").strip()
         if description and self.supports_description:
             args += ["--description", description]
-        if self.id == "ccc" and params.get("search_action") in {"vin_partslink_scenario", "vin_part_type_scenario"}:
+        if self.id == "ccc" and params.get("search_action") in {"vin_partslink_scenario", "vin_part_type_scenario", "vin_oem_vendors"}:
             args += ["--search-action", params["search_action"]]
+        vendor_match = (params.get("vendor_match") or "").strip()
+        if self.id == "ccc" and params.get("search_action") == "vin_oem_vendors" and vendor_match:
+            args += ["--vendor-match", vendor_match]
         limit = int(params.get("limit") or 0)
         if limit > 0 and self.supports_limit:
             args += ["--limit", str(limit)]
@@ -344,10 +347,9 @@ def _registry() -> dict[str, CrawlerSpec]:
             supports_resume=True,
             supports_show=True,
             supports_live_visibility=True,
-            live_visibility_flag="--live-visibility",
             supports_manual_login=True,
             sites=(SiteVariant(key="pacificbest", label="Pacific Best (portal.pacificbestinc.com)", script="pacificbest_crawler.py"),),
-            notes="Pacific Best Parts catalog. Manual login requires a visible browser; credentials are read from the project .env.",
+            notes="Runs without a browser window by default. Select Open browser for visible browsing or manual login; credentials are read from the project .env.",
             input_spec=InputSpec(
                 header_alternatives=(("PARTSLINK", "OEM"),),
                 template_headers=("PARTSLINK", "OEM"),

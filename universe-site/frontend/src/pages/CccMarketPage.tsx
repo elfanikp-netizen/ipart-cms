@@ -14,13 +14,9 @@ function localDateString(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function previousMonthDate(): string {
+function previousWeekDate(): string {
   const today = new Date();
-  const day = today.getDate();
-  today.setDate(1);
-  today.setMonth(today.getMonth() - 1);
-  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-  today.setDate(Math.min(day, lastDay));
+  today.setDate(today.getDate() - 6);
   return localDateString(today);
 }
 
@@ -50,7 +46,7 @@ export default function CccMarketPage() {
   const [oemListPriceField, setOemListPriceField] = useState<"ext-price" | "total">("ext-price");
   const [error, setError] = useState("");
   const [report, setReport] = useState<CccMarketImportSummary | null>(null);
-  const [fromDate, setFromDate] = useState(previousMonthDate);
+  const [fromDate, setFromDate] = useState(previousWeekDate);
   const [toDate, setToDate] = useState(() => localDateString(new Date()));
   const [lowestSummary, setLowestSummary] = useState<CccLowestPriceSummary | null>(null);
   const [lowestLoading, setLowestLoading] = useState(false);
@@ -375,7 +371,7 @@ export default function CccMarketPage() {
         <SearchSelect label="Description" value={dashboardDescription} options={[{ label: "All descriptions", value: "" }, ...filters.descriptions.map((item) => ({ label: item, value: item }))]} placeholder="Search descriptions" onChange={setDashboardDescription} className="ccc-filter" />
         <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>
-        <button className="text-button" onClick={() => { setFromDate(previousMonthDate()); setToDate(localDateString(new Date())); }}>Reset dates</button>
+        <button className="text-button" onClick={() => { setFromDate(previousWeekDate()); setToDate(localDateString(new Date())); }}>Reset dates</button>
         <button className="outline-button" disabled={!dashboardData || !dashboardVendor || exportingDashboard} onClick={() => void exportDashboard()}>{exportingDashboard ? "Exporting…" : "↓ Export Excel"}</button>
       </div> : activeView === "crawls" ? <div className="ccc-toolbar">
         <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => updateFilter(setSearch, event.target.value)} placeholder="Search all CCC data" /></label>
@@ -397,8 +393,8 @@ export default function CccMarketPage() {
         </>}
         <label className="ccc-filter">From date<input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label className="ccc-filter">To date<input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>
-        <button className="text-button" onClick={() => { setFromDate(previousMonthDate()); setToDate(localDateString(new Date())); }}>Reset to last month</button>
-        {activeView === "lowest" && <span className="ccc-date-note">Inclusive range · defaults to the last month</span>}
+        <button className="text-button" onClick={() => { setFromDate(previousWeekDate()); setToDate(localDateString(new Date())); }}>Reset to last week</button>
+        {activeView === "lowest" && <span className="ccc-date-note">Inclusive range · defaults to the last week</span>}
       </div>}
       {activeView === "dashboard" && <>
         {dashboardError && <div className="alert error-alert" role="alert">{dashboardError}</div>}

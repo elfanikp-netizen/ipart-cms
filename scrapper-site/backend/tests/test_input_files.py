@@ -6,6 +6,7 @@ from openpyxl import Workbook, load_workbook
 
 from app.crawlers import CRAWLERS
 from app.input_files import carid_input_mode, create_template, inspect_workbook, resolve_column_header, validate_input
+from app.routers.runs import valid_vendor_match
 
 
 def workbook_bytes(headers: list[str], rows: list[list[object]]) -> bytes:
@@ -55,6 +56,17 @@ class InputFileTests(unittest.TestCase):
         issues = validate_input(spec, "cccone", "", ["VIN"], True)
         self.assertTrue(any("OEM" in issue for issue in issues))
 
+    def test_ccc_vendor_action_passes_vendor_match_to_crawler(self) -> None:
+        args = CRAWLERS["ccc"].build_args(
+            {"search_action": "vin_oem_vendors", "vendor_match": "Cherry*, K & P AUTO DISMANTLERS"},
+            Path("input.xlsx"),
+            Path("output.xlsx"),
+        )
+        self.assertEqual(args[args.index("--search-action") + 1], "vin_oem_vendors")
+        self.assertEqual(args[args.index("--vendor-match") + 1], "Cherry*, K & P AUTO DISMANTLERS")
+        self.assertFalse(valid_vendor_match(" , ** "))
+        self.assertTrue(valid_vendor_match("Cherry Auto Parts, K & P AUTO DISMANTLERS"))
+
     def test_selected_custom_column_is_checked(self) -> None:
         spec = CRAWLERS["carid"]
 
@@ -87,6 +99,18 @@ class InputFileTests(unittest.TestCase):
         self.assertEqual(validate_input(spec, "pacificbest", "PARTSLINK", ["PARTSLINK", "OEM"], True), [])
         issues = validate_input(spec, "pacificbest", "Custom", ["Custom"], True)
         self.assertTrue(any("PARTSLINK or OEM" in issue for issue in issues))
+
+    def test_pacific_best_opens_browser_only_when_requested(self) -> None:
+        spec = CRAWLERS["pacific-best"]
+        input_path = Path("input.xlsx")
+        output_path = Path("output.xlsx")
+
+        hidden_args = spec.build_args({}, input_path, output_path)
+        visible_args = spec.build_args({"show": True}, input_path, output_path)
+
+        self.assertNotIn("--show", hidden_args)
+        self.assertNotIn("--live-visibility", hidden_args)
+        self.assertIn("--show", visible_args)
 
     def test_required_column_and_data_rows_are_checked(self) -> None:
         spec = CRAWLERS["brand-ford"]

@@ -83,6 +83,9 @@ class CccPartTypeQueueTests(unittest.IsolatedAsyncioTestCase):
                 saved.close()
             run = database.add.call_args.args[0]
             self.assertEqual(json.loads(run.params)["part_type_ids"], [4])
+            self.assertEqual(json.loads(run.params)["part_types"], [
+                {"code": "101", "description": "Bumper", "scenario": "FRONT BUMPER, COVER"}
+            ])
 
     async def test_queue_rejects_empty_scenario(self):
         database = MagicMock()

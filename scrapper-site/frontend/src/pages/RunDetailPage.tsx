@@ -4,6 +4,13 @@ import type { Run, RunLog } from "../types";
 import { continueRun, errorText, getRun, getRunLog, client, setBrowserVisibility, stopRun } from "../api";
 import ProgressBar from "../components/ProgressBar";
 
+const cccSearchActions: Record<string, string> = {
+  vin_oem: "By VIN & OEM",
+  vin_oem_vendors: "By VIN & OEM for Vendors",
+  vin_partslink_scenario: "By VIN & PARTSLINK (Scenario)",
+  vin_part_type_scenario: "By VIN & PART TYPE (Scenario)",
+};
+
 export default function RunDetailPage() {
   const { id } = useParams();
   const runId = Number(id);
@@ -65,6 +72,9 @@ export default function RunDetailPage() {
   } catch {
     /* ignore */
   }
+  const cccAction = run.crawler_id === "ccc" ? String(params.search_action || "vin_oem") : "";
+  const partTypes = Array.isArray(params.part_types) ? params.part_types as Array<{ code: string; description: string; scenario: string }> : [];
+  const partTypeIds = Array.isArray(params.part_type_ids) ? params.part_type_ids : [];
 
   const downloadOutput = async () => {
     setDownloadError(null);
@@ -162,7 +172,16 @@ export default function RunDetailPage() {
         <dd>{String(params.original_filename ?? "-")}</dd>
         {Boolean(params.site) && (<><dt>Site</dt><dd>{String(params.site)}</dd></>)}
         {Boolean(params.column) && (<><dt>Column</dt><dd>{String(params.column)}</dd></>)}
-        {Boolean(params.description) && (<><dt>Description match</dt><dd>{String(params.description)}</dd></>)}
+        {cccAction && (<><dt>Search action</dt><dd>{cccSearchActions[cccAction] || cccAction}</dd></>)}
+        {cccAction === "vin_oem_vendors" ? (
+          <><dt>Vendors match</dt><dd>{String(params.vendor_match || "-")}</dd></>
+        ) : Boolean(params.description) && (<><dt>Description match</dt><dd>{String(params.description)}</dd></>)}
+        {cccAction === "vin_part_type_scenario" && partTypes.length > 0 && (
+          <><dt>Part types</dt><dd>{partTypes.map((part) => `${part.code} - ${part.description} (${part.scenario})`).join("; ")}</dd></>
+        )}
+        {cccAction === "vin_part_type_scenario" && partTypes.length === 0 && partTypeIds.length > 0 && (
+          <><dt>Part type IDs</dt><dd>{partTypeIds.join(", ")}</dd></>
+        )}
         <dt>Created</dt>
         <dd>{new Date(run.created_at).toLocaleString()}</dd>
         <dt>Started</dt>

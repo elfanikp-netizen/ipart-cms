@@ -40,6 +40,7 @@ export default function DashboardPage() {
   const [column, setColumn] = useState("");
   const [site, setSite] = useState("");
   const [searchAction, setSearchAction] = useState("vin_oem");
+  const [vendorMatch, setVendorMatch] = useState("");
   const [partTypes, setPartTypes] = useState<Pick<CccScenarioPartType, "id" | "part_type_code" | "part_type_description" | "scenario">[]>([]);
   const [partTypeIds, setPartTypeIds] = useState<number[]>([]);
   const [partTypeSearch, setPartTypeSearch] = useState("");
@@ -67,6 +68,7 @@ export default function DashboardPage() {
   const defaultInputRequirements = selectedSite?.input ?? selected?.input;
   const cccScenarioMode = selected?.id === "ccc" && searchAction === "vin_partslink_scenario";
   const partTypeMode = selected?.id === "ccc" && searchAction === "vin_part_type_scenario";
+  const vendorMode = selected?.id === "ccc" && searchAction === "vin_oem_vendors";
   const inputRequirements = partTypeMode && defaultInputRequirements
     ? { ...defaultInputRequirements, required_headers: ["VIN"], header_alternatives: [], template_headers: ["VIN"], hint: "Use one VIN per row." }
     : cccScenarioMode && defaultInputRequirements
@@ -85,7 +87,8 @@ export default function DashboardPage() {
   const outputSearchColumn = resolvePreviewColumn(inputPreview?.headers ?? [], column.trim())
     || column.trim()
     || "selected input column";
-  const displayedOutputColumns = [...outputColumns, ...(partTypeMode ? ["Part Type Code", "Part Type Description", "Input Part Type Description", "Scenario"] : [])].map((name) =>
+  const vendorOutputColumns = ["Input Row", "Year", "Make", "Model", "VIN", "OEM", "Part Description", "Vendor", "Description", "PART#", "Delivery", "EXT. PRICE", "Labor", "Paint", "Total", "Diff", "Margin", "Status"];
+  const displayedOutputColumns = (vendorMode ? vendorOutputColumns : [...outputColumns, ...(partTypeMode ? ["Part Type Code", "Part Type Description", "Input Part Type Description", "Scenario"] : [])]).map((name) =>
     name.replace("{search_column}", outputSearchColumn)
   );
   const supportsFresh = selectedSite?.supports_fresh ?? selected?.supports_fresh ?? false;
@@ -141,7 +144,7 @@ export default function DashboardPage() {
     let active = true;
     setInputPreview(null);
     setInputPreviewLoading(true);
-    previewInput(crawlerId, file, site, column, searchAction)
+    previewInput(crawlerId, file, site, column, searchAction, vendorMatch)
       .then((preview) => {
         if (active) setInputPreview(preview);
       })
@@ -152,7 +155,7 @@ export default function DashboardPage() {
         if (active) setInputPreviewLoading(false);
       });
     return () => { active = false; };
-  }, [file, crawlerId, site, column, searchAction]);
+  }, [file, crawlerId, site, column, searchAction, vendorMatch]);
 
   useEffect(() => {
     const load = () => {
@@ -179,7 +182,7 @@ export default function DashboardPage() {
       const signature = JSON.stringify({
         crawlerId,
         file: [file.name, file.size, file.lastModified],
-        column, site, searchAction, partTypeIds, description, limit, delay, fresh, show, debug, manualLogin,
+        column, site, searchAction, partTypeIds, vendorMatch, description, limit, delay, fresh, show, debug, manualLogin,
       });
       const storageKey = "scrapper.pending-run-request";
       let requestKey: string = crypto.randomUUID();
@@ -191,7 +194,7 @@ export default function DashboardPage() {
         // The in-memory lock still prevents repeated clicks if session storage is unavailable.
       }
       const run = await createRun(crawlerId, file, {
-        column, site, search_action: searchAction, part_type_ids: JSON.stringify(partTypeIds), description, limit, delay, fresh, show, debug, manual_login: manualLogin,
+        column, site, search_action: searchAction, part_type_ids: JSON.stringify(partTypeIds), vendor_match: vendorMatch, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
       }, requestKey);
       try {
         const pending = JSON.parse(sessionStorage.getItem(storageKey) || "null") as { key?: string } | null;
@@ -297,12 +300,18 @@ export default function DashboardPage() {
                 Search action
                 <select value={searchAction} onChange={(event) => setSearchAction(event.target.value)}>
                   <option value="vin_oem">By VIN &amp; OEM</option>
+                  <option value="vin_oem_vendors">By VIN &amp; OEM for Vendors</option>
                   <option value="vin_partslink_scenario">By VIN &amp; PARTSLINK (Scenario)</option>
                   <option value="vin_part_type_scenario">By VIN &amp; PART TYPE (Scenario)</option>
                 </select>
               </label>
             </div>
           )}
+          {vendorMode && <label className="vendor-match-field">
+            Vendors match
+            <input value={vendorMatch} onChange={(event) => setVendorMatch(event.target.value)} placeholder="Cherry Auto Parts, K & P AUTO DISMANTLERS" required />
+            <small>Comma separates vendors; * matches part of a vendor name. Example: Cherry*, K &amp; P AUTO DISMANTLERS</small>
+          </label>}
           {partTypeMode && <fieldset className="part-type-selector">
             <legend>Part Type Codes</legend>
             <input type="search" value={partTypeSearch} onChange={(event) => setPartTypeSearch(event.target.value)} placeholder="Search part type codes" aria-label="Search part type codes" />
@@ -410,7 +419,7 @@ export default function DashboardPage() {
                 </select>
               </label>
             )}
-            {selected?.supports_description && (
+            {selected?.supports_description && !vendorMode && (
               <label>
                 Description match
                 <input
@@ -448,7 +457,7 @@ export default function DashboardPage() {
             {selected?.supports_show && (
               <label className="check">
                 <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} />
-                Show browser window
+                {selected.id === "pacific-best" ? "Open browser" : "Show browser window"}
               </label>
             )}
             {(selectedSite?.supports_manual_login ?? selected?.supports_manual_login) && (
@@ -466,7 +475,7 @@ export default function DashboardPage() {
           </div>
           {selected?.notes && <p className="notes">ℹ️ {selected.notes}</p>}
           {error && <p className="error">{error}</p>}
-          <button className="primary" type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true || (partTypeMode && (partTypeLoading || !partTypeIds.length))}>
+          <button className="primary" type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true || (partTypeMode && (partTypeLoading || !partTypeIds.length)) || (vendorMode && !vendorMatch.trim())}>
             {submitting ? "Uploading…" : "▶ Start run"}
           </button>
         </form>

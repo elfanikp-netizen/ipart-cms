@@ -92,13 +92,14 @@ export const deleteCccScenarioPartType = (recordId: number) =>
 
 // ---------------------------------------------------------------- crawlers & runs
 export const listCrawlers = () => client.get<Crawler[]>("/api/crawlers").then((r) => r.data);
-export function previewInput(crawlerId: string, file: File, site: string, column: string, searchAction = "vin_oem") {
+export function previewInput(crawlerId: string, file: File, site: string, column: string, searchAction = "vin_oem", vendorMatch = "") {
   const form = new FormData();
   form.append("crawler_id", crawlerId);
   form.append("file", file);
   form.append("site", site);
   form.append("column", column);
   form.append("search_action", searchAction);
+  form.append("vendor_match", vendorMatch);
   return client.post<InputPreview>("/api/input-preview", form).then((r) => r.data);
 }
 export function downloadCrawlerTemplate(crawlerId: string, site: string, searchAction = "vin_oem") {

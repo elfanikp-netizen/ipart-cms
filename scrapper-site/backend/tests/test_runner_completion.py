@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import textwrap
 import time
 import unittest
@@ -13,6 +14,26 @@ from app.runner import Runner, _parse_progress
 
 
 class RunnerCompletionTests(unittest.TestCase):
+    def test_enqueue_starts_multiple_runs_concurrently(self) -> None:
+        runner = Runner()
+        both_started = threading.Event()
+        release_runs = threading.Event()
+        started = set()
+        started_lock = threading.Lock()
+
+        def wait_for_release(run_id: int) -> None:
+            with started_lock:
+                started.add(run_id)
+                if len(started) == 2:
+                    both_started.set()
+            release_runs.wait(timeout=2)
+
+        with patch.object(runner, "_run_one", side_effect=wait_for_release):
+            runner.enqueue(101)
+            runner.enqueue(102)
+            self.assertTrue(both_started.wait(timeout=2))
+            release_runs.set()
+
     def test_google_sign_in_wait_markers_update_run_waiting_state(self) -> None:
         runner = Runner()
         with patch.object(runner, "_set_waiting") as set_waiting:

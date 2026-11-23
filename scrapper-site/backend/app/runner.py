@@ -427,14 +427,13 @@ if ($windowCount -eq 0) {{ exit 3 }}
                 )
                 self._procs[run_id] = proc
                 if spec.supports_live_visibility:
-                    self._browser_visibility[run_id] = True
+                    self._browser_visibility[run_id] = (
+                        bool(params.get("show")) if spec.id == "pacific-best" else True
+                    )
             with SessionLocal() as db:
                 run = db.get(Run, run_id)
                 run.pid = proc.pid
                 db.commit()
-            if spec.id == "pacific-best" and not params.get("show") and not params.get("manual_login"):
-                self.set_browser_visibility(run_id, False)
-
             returncode = self._monitor_process_output(proc, log_path, run_id)
 
         with SessionLocal() as db:
