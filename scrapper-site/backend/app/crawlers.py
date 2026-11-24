@@ -194,6 +194,14 @@ class CrawlerSpec:
             args.append("--resume")
         if self.live_visibility_flag:
             args.append(self.live_visibility_flag)
+        if self.id == "ccc":
+            if params.get("safety_crawl"):
+                args.append("--safety-crawl")
+                args += ["--safety-min", str(max(0.0, float(params.get("safety_min_seconds") or 3.0))),
+                         "--safety-max", str(max(0.0, float(params.get("safety_max_seconds") or 8.0))),
+                         "--pause-after", str(max(1, int(params.get("safety_pause_after") or 100))),
+                         "--pause-seconds", str(max(60, int(params.get("safety_pause_seconds") or 300))),
+                         "--failure-limit", str(max(1, int(params.get("safety_failure_limit") or 3)))]
         return args
 
     def to_dict(self) -> dict:

@@ -189,6 +189,18 @@ export default function RunDetailPage() {
         <dt>Finished</dt>
         <dd>{run.finished_at ? new Date(run.finished_at).toLocaleString() : "-"}</dd>
         {run.returncode !== null && (<><dt>Exit code</dt><dd>{run.returncode}</dd></>)}
+        {run.crawler_id === "ccc" && (
+          <>
+            <dt>Safety Crawl</dt>
+            <dd>{params.safety_crawl === false ? "Disabled" : "Enabled · 3–8 seconds random delay · 5-minute pause · stop after 3 failures"}</dd>
+            {params.safety_crawl !== false && (
+              <>
+                <dt>Safety settings</dt>
+                <dd>{`${String(params.safety_min_seconds ?? 3)}–${String(params.safety_max_seconds ?? 8)} sec delay · every ${String(params.safety_pause_after ?? 100)} lookups · ${String((Number(params.safety_pause_seconds ?? 300) / 60) || 5)}-minute pause · ${String(params.safety_failure_limit ?? 3)} failures`}</dd>
+              </>
+            )}
+          </>
+        )}
       </dl>
 
       {run.error && <pre className="error-block">{run.error}</pre>}

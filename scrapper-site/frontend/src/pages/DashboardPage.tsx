@@ -52,6 +52,12 @@ export default function DashboardPage() {
   const [show, setShow] = useState(false);
   const [debug, setDebug] = useState(false);
   const [manualLogin, setManualLogin] = useState(false);
+  const [safetyCrawl, setSafetyCrawl] = useState(true);
+  const [safetyMinSeconds, setSafetyMinSeconds] = useState(3);
+  const [safetyMaxSeconds, setSafetyMaxSeconds] = useState(8);
+  const [safetyPauseAfter, setSafetyPauseAfter] = useState(100);
+  const [safetyPauseSeconds, setSafetyPauseSeconds] = useState(300);
+  const [safetyFailureLimit, setSafetyFailureLimit] = useState(3);
   const [submitting, setSubmitting] = useState(false);
   const [continuingRunId, setContinuingRunId] = useState<number | null>(null);
   const [showVpnWarning, setShowVpnWarning] = useState(false);
@@ -183,6 +189,7 @@ export default function DashboardPage() {
         crawlerId,
         file: [file.name, file.size, file.lastModified],
         column, site, searchAction, partTypeIds, vendorMatch, description, limit, delay, fresh, show, debug, manualLogin,
+        safetyCrawl, safetyMinSeconds, safetyMaxSeconds, safetyPauseAfter, safetyPauseSeconds, safetyFailureLimit,
       });
       const storageKey = "scrapper.pending-run-request";
       let requestKey: string = crypto.randomUUID();
@@ -195,6 +202,7 @@ export default function DashboardPage() {
       }
       const run = await createRun(crawlerId, file, {
         column, site, search_action: searchAction, part_type_ids: JSON.stringify(partTypeIds), vendor_match: vendorMatch, description, limit, delay, fresh, show, debug, manual_login: manualLogin,
+        safety_crawl: safetyCrawl, safety_min_seconds: safetyMinSeconds, safety_max_seconds: safetyMaxSeconds, safety_pause_after: safetyPauseAfter, safety_pause_seconds: 300, safety_failure_limit: safetyFailureLimit,
       }, requestKey);
       try {
         const pending = JSON.parse(sessionStorage.getItem(storageKey) || "null") as { key?: string } | null;
@@ -472,7 +480,60 @@ export default function DashboardPage() {
                 Debug (save HTML/screenshots)
               </label>
             )}
+            {selected?.id === "ccc" && (
+              <label className="check">
+                <input type="checkbox" checked={safetyCrawl} onChange={(e) => setSafetyCrawl(e.target.checked)} />
+                Safety Crawl (recommended)
+              </label>
+            )}
           </div>
+          {selected?.id === "ccc" && safetyCrawl && (
+            <div className="safety-crawl-card">
+              <div className="safety-crawl-heading">
+                <div>
+                  <strong>Safety Crawl</strong>
+                  <p>Uses slower, checkpointed requests and stops repeated failures. It does not bypass CCC security checks.</p>
+                </div>
+                <span className="safety-crawl-badge">Recommended</span>
+              </div>
+              <div className="safety-crawl-settings">
+                <label>
+                  <span>Random delay</span>
+                  <div className="safety-range-inputs">
+                    <input aria-label="Minimum random delay in seconds" type="number" min={3} max={15} step={1} value={safetyMinSeconds} onChange={(e) => setSafetyMinSeconds(Math.max(3, Math.min(15, Number(e.target.value))))} />
+                    <span>to</span>
+                    <input aria-label="Maximum random delay in seconds" type="number" min={3} max={15} step={1} value={safetyMaxSeconds} onChange={(e) => setSafetyMaxSeconds(Math.max(safetyMinSeconds, Math.min(15, Number(e.target.value))))} />
+                    <span>seconds</span>
+                  </div>
+                  <small>Waits randomly between completed lookup groups.</small>
+                </label>
+                <label>
+                  <span>Pause after</span>
+                  <div className="safety-range-inputs">
+                    <input aria-label="Completed lookups before pause" type="number" min={25} max={500} step={25} value={safetyPauseAfter} onChange={(e) => setSafetyPauseAfter(Math.max(25, Math.min(500, Number(e.target.value))))} />
+                    <span>completed lookups</span>
+                  </div>
+                  <small>5-minute pause starts after this checkpoint.</small>
+                </label>
+                <label>
+                  <span>Pause duration</span>
+                  <div className="safety-range-inputs">
+                    <input aria-label="Pause duration in seconds" type="number" min={300} max={300} step={300} value={300} readOnly />
+                    <span>seconds</span>
+                  </div>
+                  <small>Fixed 5-minute pause for safer recovery.</small>
+                </label>
+                <label>
+                  <span>Stop after</span>
+                  <div className="safety-range-inputs">
+                    <input aria-label="Consecutive failure limit" type="number" min={1} max={10} step={1} value={safetyFailureLimit} onChange={(e) => setSafetyFailureLimit(Math.max(1, Math.min(10, Number(e.target.value))))} />
+                    <span>consecutive failures</span>
+                  </div>
+                  <small>Stops the run and preserves all completed checkpoints.</small>
+                </label>
+              </div>
+            </div>
+          )}
           {selected?.notes && <p className="notes">ℹ️ {selected.notes}</p>}
           {error && <p className="error">{error}</p>}
           <button className="primary" type="submit" disabled={submitting || !file || !selected || inputPreviewLoading || inputPreview?.valid !== true || (partTypeMode && (partTypeLoading || !partTypeIds.length)) || (vendorMode && !vendorMatch.trim())}>
@@ -601,8 +662,8 @@ function formatRuntime(run: Run): string {
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  if (days) return `${days}d ${hours}h`;
-  if (hours) return `${hours}h ${minutes}m`;
-  if (minutes) return `${minutes}m ${seconds}s`;
+  if (days > 0) return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
 }

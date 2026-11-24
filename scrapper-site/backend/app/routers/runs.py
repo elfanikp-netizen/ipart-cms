@@ -480,10 +480,25 @@ async def create_run(
     show: bool = Form(False),
     debug: bool = Form(False),
     manual_login: bool = Form(False),
+    safety_crawl: bool = Form(True),
+    safety_min_seconds: float = Form(3.0),
+    safety_max_seconds: float = Form(8.0),
+    safety_pause_after: int = Form(100),
+    safety_pause_seconds: int = Form(300),
+    safety_failure_limit: int = Form(3),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=64),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    safety_crawl = True if isinstance(safety_crawl, bool) and safety_crawl else (
+        bool(getattr(safety_crawl, "default", True)) if hasattr(safety_crawl, "default") else bool(safety_crawl)
+    )
+    safety_min_seconds = float(getattr(safety_min_seconds, "default", safety_min_seconds))
+    safety_max_seconds = float(getattr(safety_max_seconds, "default", safety_max_seconds))
+    safety_pause_after = int(getattr(safety_pause_after, "default", safety_pause_after))
+    safety_pause_seconds = int(getattr(safety_pause_seconds, "default", safety_pause_seconds))
+    safety_failure_limit = int(getattr(safety_failure_limit, "default", safety_failure_limit))
+
     idempotency_key = idempotency_key.strip() if idempotency_key else None
     if idempotency_key:
         existing_run = db.scalar(select(Run).where(
@@ -564,6 +579,12 @@ async def create_run(
         "show": show,
         "debug": debug,
         "manual_login": manual_login,
+        "safety_crawl": safety_crawl,
+        "safety_min_seconds": safety_min_seconds,
+        "safety_max_seconds": safety_max_seconds,
+        "safety_pause_after": safety_pause_after,
+        "safety_pause_seconds": safety_pause_seconds,
+        "safety_failure_limit": safety_failure_limit,
         "original_filename": file.filename,
         "part_type_ids": [record.id for record in part_types],
         "part_types": [{"code": record.part_type_code, "description": record.part_type_description,

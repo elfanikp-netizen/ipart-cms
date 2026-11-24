@@ -463,5 +463,15 @@ if ($windowCount -eq 0) {{ exit 3 }}
             ))
             db.commit()
 
+    def active_ccc_run_id(self) -> int | None:
+        with self._lock:
+            active_ids = list(self._procs)
+        with SessionLocal() as db:
+            for run_id in active_ids:
+                run = db.get(Run, run_id)
+                if run is not None and run.crawler_id == "ccc":
+                    return run_id
+        return None
+
 
 runner = Runner()

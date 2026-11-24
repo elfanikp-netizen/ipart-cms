@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import "./lowest-price.css";
-import { errorText, exportCccLowestPriceDetails, exportCccMarketCrawls, exportCccOemListPrices, exportCccVendorDashboard, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
+import { errorText, exportCccLowestPriceDetails, exportCccLowestPriceSummary, exportCccMarketCrawls, exportCccOemListPrices, exportCccVendorDashboard, getCccLowestPriceDetails, getCccLowestPriceSummary, getCccMarketFilters, getCccMarketOffers, getCccMarketPage, getCccPriceHistory, getCccVendorDashboard, getCccVehicleOptions, importCccMarketExcel } from "../api";
 import type { CccLowestPriceDetail, CccLowestPriceSummary, CccMarketFilters, CccMarketImportSummary, CccMarketOffer, CccMarketRecord, CccPriceHistory, CccVendorDashboard } from "../api";
 import SearchSelect from "../components/SearchSelect";
 
@@ -78,6 +78,8 @@ export default function CccMarketPage() {
   const [columnSearch, setColumnSearch] = useState<Record<string, string>>({});
   const [sortColumn, setSortColumn] = useState("");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [lowestVendor, setLowestVendor] = useState("");
+  const [exportingLowestSummary, setExportingLowestSummary] = useState(false);
 
   useEffect(() => {
     getCccMarketFilters().then((result) => {
@@ -308,6 +310,18 @@ export default function CccMarketPage() {
     }
   };
 
+  const exportLowestSummary = async () => {
+    setExportingLowestSummary(true);
+    setLowestError("");
+    try {
+      await exportCccLowestPriceSummary({ vendor: lowestVendor, from_date: fromDate, to_date: toDate });
+    } catch (reason) {
+      setLowestError(errorText(reason));
+    } finally {
+      setExportingLowestSummary(false);
+    }
+  };
+
   const offerColumns = [...new Set(offers.flatMap((offer) => Object.keys(offer.market_data)))];
   const visibleOffers = offers.filter((offer) => offerColumns.every((column) => {
     const filter = (columnSearch[column] ?? "").trim().toLocaleLowerCase();
@@ -386,6 +400,10 @@ export default function CccMarketPage() {
         </label>
         <button className="outline-button" disabled={exportingCrawls} onClick={() => { setOemListFile(null); setCrawlExportMode("all"); setShowOemListExport(true); }}>↓ Export Excel</button>
       </div> : <div className="ccc-toolbar ccc-date-toolbar">
+        {activeView === "lowest" && <>
+          <SearchSelect label="Vendor" value={lowestVendor} options={filters.vendors.map((item) => ({ label: item, value: item }))} placeholder="All vendors" clearable onChange={setLowestVendor} className="ccc-filter" />
+          <button className="outline-button" disabled={exportingLowestSummary || lowestLoading} onClick={() => void exportLowestSummary()}>{exportingLowestSummary ? "Exporting…" : "↓ Export Lowest Price"}</button>
+        </>}
         {activeView === "history" && <>
           <SearchSelect label="OEM" value={historyOem} options={historyOemOptions.map((item) => ({ label: item, value: item }))} placeholder="Search OEM" loading={historyOptionsLoading} emptyMessage="No matching OEMs" clearable onChange={setHistoryOem} className="ccc-filter" />
           <SearchSelect label="VIN" value={historyVin} options={historyVinOptions.map((item) => ({ label: item, value: item }))} placeholder={historyOem ? "VINs for selected OEM" : "Search VIN"} loading={historyOptionsLoading} emptyMessage="No matching VINs" clearable onChange={setHistoryVin} className="ccc-filter" />

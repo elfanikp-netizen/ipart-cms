@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import String, cast, func, or_, select, text, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -80,6 +81,13 @@ def market_field(data: dict | list, field: str) -> str:
     return ", ".join(found)
 
 
+def offer_description(offer: dict | list) -> str:
+    description_type = market_field(offer, "description_type").strip()
+    if description_type:
+        return description_type
+    return market_field(offer, "description").strip()
+
+
 def market_entries(data: dict | list) -> list[dict]:
     entries = [data] if isinstance(data, dict) else data
     if any(not isinstance(entry, dict) for entry in entries):
@@ -119,7 +127,7 @@ def _rank_oem_list_crawl(
         offers = market_entries(record.market_data)
         for offer in offers:
             vendor = market_field(offer, "vendor").strip()
-            description = market_field(offer, "description").strip()
+            description = offer_description(offer)
             if not vendor or not description or description.casefold() not in descriptions:
                 continue
             price = numeric_price(_offer_value(offer, price_field))
@@ -193,7 +201,12 @@ def _rank_oem_list_crawl(
             "previous_lowest_price": previous_price,
             "crawl_count": len(ordered_dates),
         })
-    return sorted(rows, key=lambda row: row["oem"].casefold())
+    return sorted(rows, key=lambda row: (
+        row["crawl_date"] is None,
+        -(row["crawl_date"].timestamp() if row["crawl_date"] is not None else 0),
+        row["oem"].casefold(),
+        row["vin"].casefold(),
+    ))
 
 
 @router.post("/export-by-oem-list")
@@ -261,7 +274,9 @@ def export_ccc_oem_list_prices(
             "export_status": "No CCC offer matches selected vendor/description/price" if has_ccc_data else "No CCC data for this OEM",
         })
 
-    workbook = Workbook(write_only=True)
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
     sheet = workbook.create_sheet("CCC List")
     winner_label = "Lowest" if price_direction == "lowest" else "Highest"
     sheet.append([
@@ -310,8 +325,8 @@ def matching_oem_price(market_data: dict | list) -> Decimal | None:
     prices = [
         price
         for offer in market_entries(market_data)
-        if market_field(offer, "description").strip().casefold() == "oem"
-        if (price := numeric_price(offer.get("ext-price"))) is not None
+        if offer_description(offer).casefold() == "oem"
+        if (price := numeric_price(_offer_value(offer, "ext-price"))) is not None
     ]
     return min(prices) if prices else None
 
@@ -452,7 +467,9 @@ def export_ccc_market_records(
         CccMarketRecord.vin,
     )
     rows = db.execute(groups).all()
-    workbook = Workbook(write_only=True)
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
     sheet = workbook.create_sheet("CCC Crawls")
     sheet.append(["OEM", "VIN", "Crawl Date", "Offer Count"])
     for row in rows:
@@ -499,7 +516,7 @@ def ccc_price_history(
             if not isinstance(entry, dict):
                 continue
             fields = {str(key).casefold(): value for key, value in entry.items()}
-            offer_description = str(fields.get("description") or "").strip()
+            offer_description = str(fields.get("description_type") or fields.get("description") or "").strip()
             vendor = str(fields.get("vendor") or "").strip()
             price = numeric_price(fields.get("ext-price"))
             if offer_description.casefold() != description.strip().casefold() or not vendor or price is None:
@@ -565,7 +582,7 @@ def lowest_price_rows(
                 SELECT DISTINCT oem, vin, crawl_date
                 FROM universe.ccc_market_data
                 WHERE lower(btrim(vendor)) = lower(:target_vendor)
-                  AND lower(btrim(description)) = lower(:target_description)
+                  AND lower(btrim(COALESCE(NULLIF(market_data ->> 'description_type', ''), market_data ->> 'description'))) = lower(:target_description)
                   __TARGET_DATE_FILTERS__
             ),
         """ if target_vendor is not None and target_description is not None else ""
@@ -588,9 +605,9 @@ def lowest_price_rows(
                 WHERE target.oem = ccc_market_data.oem AND target.vin = ccc_market_data.vin
                   AND target.crawl_date = ccc_market_data.crawl_date
             )
-            AND lower(btrim(market_data ->> 'description')) = lower(:target_description)
+            AND lower(btrim(COALESCE(NULLIF(market_data ->> 'description_type', ''), market_data ->> 'description'))) = lower(:target_description)
         """ if target_vendor is not None and target_description is not None else ""
-        description_filter = "AND lower(btrim(market_data ->> 'description')) = lower(:target_description)" if target_description is not None and target_vendor is None else ""
+        description_filter = "AND lower(btrim(COALESCE(NULLIF(market_data ->> 'description_type', ''), market_data ->> 'description'))) = lower(:target_description)" if target_description is not None and target_vendor is None else ""
         date_filters = []
         if from_date is not None:
             date_filters.append("crawl_date >= :from_date")
@@ -605,8 +622,8 @@ def lowest_price_rows(
         statement = text(f"""
             WITH {vehicle_cte}{crawl_cte}{target_group_cte}extracted AS (
                 SELECT oem, vin, crawl_date,
-                    lower(btrim(market_data ->> 'description')) AS description_key,
-                    btrim(market_data ->> 'description') AS description,
+                    lower(btrim(COALESCE(NULLIF(market_data ->> 'description_type', ''), market_data ->> 'description'))) AS description_key,
+                    btrim(COALESCE(NULLIF(market_data ->> 'description_type', ''), market_data ->> 'description')) AS description,
                     btrim(market_data ->> 'vendor') AS vendor,
                     regexp_replace(COALESCE(market_data ->> 'ext-price', ''), '[$,[:space:]]', '', 'g') AS price_text
                 FROM universe.ccc_market_data
@@ -683,7 +700,7 @@ def lowest_price_rows(
     for oem, vin, crawl_date, offer in db.execute(stmt):
         if not isinstance(offer, dict):
             continue
-        description = str(offer.get("description") or "").strip()
+        description = offer_description(offer)
         vendor = str(offer.get("vendor") or "").strip()
         price = numeric_price(offer.get("ext-price"))
         if description and vendor and price is not None:
@@ -779,7 +796,7 @@ def _build_ccc_vendor_dashboard(
             JOIN prior_keys AS prior
               ON prior.oem = records.oem AND prior.vin = records.vin
              AND prior.crawl_date = records.crawl_date
-             AND prior.description_key = lower(btrim(records.description))
+             AND prior.description_key = lower(btrim(COALESCE(NULLIF(records.market_data ->> 'description_type', ''), records.market_data ->> 'description')))
             WHERE btrim(records.vendor) <> ''
         """), {
             "detail_keys": json.dumps([
@@ -794,7 +811,7 @@ def _build_ccc_vendor_dashboard(
                 continue
             prior_vendor = str(offer.get("vendor") or "").strip()
             prior_price = numeric_price(offer.get("ext-price"))
-            prior_description = str(offer.get("description") or "").strip().casefold()
+            prior_description = offer_description(offer).casefold()
             if prior_vendor and prior_price is not None:
                 grouped_prior[(record["oem"], record["vin"], record["crawl_date"], prior_description)].append((prior_vendor, prior_price))
         for (prior_oem, prior_vin, prior_date, prior_description), offers in grouped_prior.items():
@@ -961,7 +978,9 @@ def _build_ccc_vendor_dashboard(
 @router.get("/vendor-dashboard/export")
 def export_ccc_vendor_dashboard(vendor: str = Query(..., min_length=1), from_date: date | None = None, to_date: date | None = None, description: str = "", db: Session = Depends(get_db), user: PortalUser = Depends(get_current_user)):
     dashboard = _build_ccc_vendor_dashboard(vendor, from_date, to_date, description, db, details_limit=None)
-    workbook = Workbook(write_only=True)
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
     summary = workbook.create_sheet("Summary")
     summary.append([
         "Vendor", "From Date", "To Date", "Description", "Priced Offers",
@@ -1147,7 +1166,12 @@ def ccc_lowest_price_details(
             if row["crawl_date"] > item["crawl_date"]:
                 item.update(row)
                 item["crawl_count"] = by_oem[row["oem"]]["crawl_count"]
-        rows = sorted(by_oem.values(), key=lambda row: (row["oem"], row["vin"]))
+        rows = sorted(by_oem.values(), key=lambda row: (
+            row["crawl_date"] is None,
+            -(row["crawl_date"].timestamp() if row["crawl_date"] is not None else 0),
+            row["oem"].casefold(),
+            row["vin"].casefold(),
+        ))
     return [{
         **row,
         "price": str(row["price"]),
@@ -1169,7 +1193,9 @@ def export_ccc_lowest_price_details(
     user: PortalUser = Depends(get_current_user),
 ):
     rows = ccc_lowest_price_details(vendor, description, outcome, metric, from_date, to_date, db)
-    workbook = Workbook(write_only=True)
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
     sheet = workbook.create_sheet("Lowest Price")
     sheet.append(["OEM", "VIN", "Crawl Date", "Vendor", "Description", "Outcome", "Price", "Gap Price", "Lowest Vendor(s)", "Lowest Price", "Second Lowest Vendor(s)", "Second Lowest Price", "Previous Crawl Date", "Gap Previous Price", "Previous Lowest Vendor(s)", "Previous Lowest Price", "Crawls per OEM"])
     for row in rows:
@@ -1194,6 +1220,209 @@ def export_ccc_lowest_price_details(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=ccc-{outcome}-{metric}-details.xlsx"},
+    )
+
+
+@router.get("/lowest-price/summary/export")
+def export_ccc_lowest_price_summary(
+    vendor: str = "",
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: Session = Depends(get_db),
+    user: PortalUser = Depends(get_current_user),
+):
+    summary = ccc_lowest_price_summary(from_date, to_date, db)
+    selected_vendor = vendor.strip().casefold()
+    vendors = [
+        item for item in summary["vendors"]
+        if not selected_vendor or item["vendor"].casefold() == selected_vendor
+    ]
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+
+    title_fill = PatternFill("solid", fgColor="DCE8DD")
+    header_fill = PatternFill("solid", fgColor="EEF3EF")
+    win_fill = PatternFill("solid", fgColor="D9EBD9")
+    loss_fill = PatternFill("solid", fgColor="F1DDD7")
+    info_fill = PatternFill("solid", fgColor="E9F0F5")
+    thin = Side(style="thin", color="D5DDD6")
+
+    def clean_datetime(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if getattr(value, "tzinfo", None):
+            value = value.replace(tzinfo=None)
+        return value
+
+    overview = workbook.create_sheet("Report Overview")
+    overview.append(["CCC Lowest Price — Vendor OEM Performance"])
+    overview.append(["Date range", str(from_date or "All dates"), "through", str(to_date or "All dates")])
+    overview.append(["Vendor filter", vendor.strip() or "All vendors"])
+    overview.append(["Generated for team review", datetime.now().strftime("%Y-%m-%d %H:%M")])
+    overview.append([])
+    overview.append(["Vendor", "Distinct OEMs", "OEMs Won", "OEMs Lost", "Win Rate", "Highest-Loss Description", "Useful Review Note"])
+
+    used_sheet_names: set[str] = set()
+
+    def vendor_sheet_name(name: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9 _&()-]+", "-", name).strip() or "Vendor"
+        safe = safe[:31]
+        unique = safe
+        number = 2
+        while unique in used_sheet_names:
+            suffix = f"-{number}"
+            unique = f"{safe[:31-len(suffix)]}{suffix}"
+            number += 1
+        used_sheet_names.add(unique)
+        return unique
+
+    for vendor_item in vendors:
+        won_oems = vendor_item["won_oem_count"]
+        lost_oems = vendor_item["lost_oem_count"]
+        opportunities = won_oems + lost_oems
+        win_rate = (Decimal(won_oems) / Decimal(opportunities) * Decimal("100")).quantize(Decimal("0.1")) if opportunities else Decimal("0.0")
+        sorted_descriptions = sorted(
+            vendor_item["descriptions"],
+            key=lambda item: (-item["lost_oem_count"], -item["won_oem_count"], item["description"].casefold()),
+        )
+        highest_loss_description = sorted_descriptions[0]["description"] if sorted_descriptions and sorted_descriptions[0]["lost_oem_count"] else "No lost OEMs"
+        review_note = (
+            f"Review {lost_oems} lost OEM(s); {highest_loss_description} has the highest loss count."
+            if lost_oems else "No lost OEMs in the selected range; maintain current positioning."
+        )
+        overview.append([
+            vendor_item["vendor"], vendor_item["oem_count"], won_oems, lost_oems,
+            f"{win_rate}%", highest_loss_description, review_note,
+        ])
+
+        sheet = workbook.create_sheet(vendor_sheet_name(vendor_item["vendor"]))
+        sheet.freeze_panes = "A10"
+        sheet.sheet_view.showGridLines = False
+        sheet.append([f"{vendor_item['vendor']} — Lowest Price OEM Performance"])
+        sheet.append(["Date range", str(from_date or "All dates"), "through", str(to_date or "All dates")])
+        sheet.append(["Distinct OEMs", vendor_item["oem_count"], "OEMs Won", won_oems, "OEMs Lost", lost_oems, "OEM Win Rate", f"{win_rate}%"])
+        sheet.append(["Team review", review_note])
+        sheet.append([])
+        sheet.append(["Description", "OEMs Won", "OEMs Lost", "Win Rate", "Review Priority"])
+
+        for description_item in sorted_descriptions:
+            description_won = description_item["won_oem_count"]
+            description_lost = description_item["lost_oem_count"]
+            description_opportunities = description_won + description_lost
+            description_win_rate = (
+                Decimal(description_won) / Decimal(description_opportunities) * Decimal("100")
+            ).quantize(Decimal("0.1")) if description_opportunities else Decimal("0.0")
+            priority = "High" if description_lost >= 10 else "Medium" if description_lost > 0 else "Monitor"
+            sheet.append([
+                description_item["description"], description_won, description_lost,
+                f"{description_win_rate}%", priority,
+            ])
+
+        won_header_row = sheet.max_row + 3
+        sheet.append([])
+        sheet.append(["OEM WINS"])
+        won_columns_row = sheet.max_row + 1
+        sheet.append(["Description", "OEM", "VIN", "Crawl Date", "Vendor Price", "Lowest Vendor", "Lowest Price", "Gap", "Team Action"])
+
+        for description_item in vendor_item["descriptions"]:
+            description = description_item["description"]
+            rows = ccc_lowest_price_details(
+                vendor_item["vendor"], description, "won", "oem", from_date, to_date, db
+            )
+            for row in rows:
+                gap = Decimal(str(row["gap_price"]))
+                action = "Maintain" if gap <= Decimal("0") else "Protect / retain lowest position"
+                sheet.append([
+                    description, row["oem"], row["vin"], clean_datetime(row["crawl_date"]),
+                    row["price"], row["lowest_vendors"], row["lowest_price"], row["gap_price"], action,
+                ])
+
+        if sheet.max_row == won_columns_row:
+            sheet.append(["No OEM wins in the selected range"])
+
+        lost_header_row = sheet.max_row + 3
+        sheet.append([])
+        sheet.append(["OEM LOSSES"])
+        lost_columns_row = sheet.max_row + 1
+        sheet.append(["Description", "OEM", "VIN", "Crawl Date", "Vendor Price", "Lowest Vendor", "Lowest Price", "Gap", "Team Action"])
+
+        for description_item in vendor_item["descriptions"]:
+            description = description_item["description"]
+            rows = ccc_lowest_price_details(
+                vendor_item["vendor"], description, "lost", "oem", from_date, to_date, db
+            )
+            for row in rows:
+                gap = Decimal(str(row["gap_price"]))
+                action = "Competitive loss — review price or supplier update"
+                if gap >= Decimal("100"):
+                    action = "High-priority gap — review immediately"
+                sheet.append([
+                    description, row["oem"], row["vin"], clean_datetime(row["crawl_date"]),
+                    row["price"], row["lowest_vendors"], row["lowest_price"], row["gap_price"], action,
+                ])
+
+        if sheet.max_row == lost_columns_row:
+            sheet.append(["No OEM losses in the selected range"])
+
+        widths = {"A":34, "B":18, "C":24, "D":22, "E":18, "F":28, "G":18, "H":18, "I":48}
+        for column, width in widths.items():
+            sheet.column_dimensions[column].width = width
+
+        for cell in sheet[1]:
+            cell.fill = title_fill
+            cell.font = Font(bold=True, size=15, color="314735")
+        for cell in sheet[3]:
+            cell.fill = info_fill
+            cell.font = Font(bold=True, color="314735")
+        for cell in sheet[4]:
+            cell.fill = info_fill
+            cell.font = Font(bold=True, color="314735")
+        for cell in sheet[6]:
+            cell.fill = header_fill
+            cell.font = Font(bold=True, color="314735")
+        for cell in sheet[won_header_row]:
+            cell.fill = win_fill
+            cell.font = Font(bold=True, color="314735")
+        for cell in sheet[won_columns_row]:
+            cell.fill = win_fill
+            cell.font = Font(bold=True, color="314735")
+        for cell in sheet[lost_header_row]:
+            cell.fill = loss_fill
+            cell.font = Font(bold=True, color="314735")
+        for cell in sheet[lost_columns_row]:
+            cell.fill = loss_fill
+            cell.font = Font(bold=True, color="314735")
+
+    for column, width in {"A":28, "B":14, "C":14, "D":12, "E":12, "F":34, "G":48}.items():
+        overview.column_dimensions[column].width = width
+    overview.freeze_panes = "A7"
+    overview.sheet_view.showGridLines = False
+    for row_number in range(1, 7):
+        for cell in overview[row_number]:
+            if row_number == 1:
+                cell.fill = title_fill
+                cell.font = Font(bold=True, size=15, color="314735")
+            elif row_number == 6:
+                cell.fill = header_fill
+                cell.font = Font(bold=True, color="314735")
+            elif row_number in (2, 3, 4):
+                cell.fill = info_fill
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+            cell.border = Border(bottom=thin)
+
+    log_activity(db, user, "export_ccc_lowest_price_summary", f"exported OEM-focused Lowest Price summary for {len(vendors)} vendor(s)")
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    stream.seek(0)
+    safe_vendor = re.sub(r"[^A-Za-z0-9_-]+", "-", vendor.strip()).strip("-") or "all-vendors"
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=ccc-lowest-price-{safe_vendor}.xlsx"},
     )
 
 
@@ -1230,7 +1459,9 @@ def import_ccc_market_records(
                         CccMarketRecord.crawl_date == crawl_date,
                     ).order_by(CccMarketRecord.market_index)).all()
                     old_data = [record.market_data for record in existing]
-                    if old_data == stored_entries:
+                    old_descriptions = [record.description for record in existing]
+                    expected_descriptions = [offer_description(offer) for offer in stored_entries]
+                    if old_data == stored_entries and old_descriptions == expected_descriptions:
                         skipped += len(stored_entries)
                     else:
                         if existing:
@@ -1243,7 +1474,7 @@ def import_ccc_market_records(
                                 vin=vin,
                                 crawl_date=crawl_date,
                                 market_index=market_index,
-                                description=market_field(offer, "description"),
+                                description=offer_description(offer),
                                 vendor=market_field(offer, "vendor"),
                                 market_data=offer,
                             ))

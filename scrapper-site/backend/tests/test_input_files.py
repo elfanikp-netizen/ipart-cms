@@ -163,6 +163,24 @@ class InputFileTests(unittest.TestCase):
                 with self.subTest(crawler=crawler_id, site=site["key"]):
                     self.assertRegex(site["label"], r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
+    def test_ccc_safety_crawl_build_args(self) -> None:
+        spec = CRAWLERS["ccc"]
+        args = spec.build_args(
+            {
+                "search_action": "vin_oem",
+                "safety_crawl": True,
+                "safety_min_seconds": 3,
+                "safety_max_seconds": 8,
+                "safety_pause_after": 100,
+                "safety_pause_seconds": 300,
+                "safety_failure_limit": 3,
+            },
+            Path("input.xlsx"),
+            Path("output.xlsx"),
+        )
+        self.assertIn("--safety-crawl", args)
+        self.assertEqual(args[args.index("--pause-seconds") + 1], "300")
+
 
 if __name__ == "__main__":
     unittest.main()

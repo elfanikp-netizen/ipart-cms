@@ -17,6 +17,7 @@ from app.routers.ccc_market import (
     export_ccc_oem_list_prices,
     filtered_ccc_records,
     matching_oem_price,
+    offer_description,
 )
 from app.routers.parts_msrp import (
     ccc_price_history,
@@ -434,6 +435,41 @@ class PartsMsrpTests(unittest.TestCase):
                 self.assertIn("abc123", str(statement.compile().params).casefold())
                 self.assertEqual(response.headers["content-disposition"], 'attachment; filename="parts-msrp-by-oem.xlsx"')
 
+    def test_offer_description_prefers_description_type_then_description(self):
+        self.assertEqual(
+            offer_description({"description_type": "A/M: CAPA", "description": "A/M"}),
+            "A/M: CAPA",
+        )
+        self.assertEqual(
+            offer_description({"description_type": "", "description": "A/M"}),
+            "A/M",
+        )
+
+    def test_oem_ranking_orders_latest_crawl_first(self):
+        latest = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        earlier = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        records = [
+            SimpleNamespace(oem="ZZZ", vin="VIN-Z", crawl_date=earlier, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "50",
+            }),
+            SimpleNamespace(oem="AAA", vin="VIN-A", crawl_date=latest, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "40",
+            }),
+            SimpleNamespace(oem="BBB", vin="VIN-B", crawl_date=earlier, market_data={
+                "vendor": "Vendor A", "description": "A/M: CAPA", "ext-price": "30",
+            }),
+        ]
+
+        rows = _rank_oem_list_crawl(
+            records,
+            {"vendor a"},
+            {"a/m: capa"},
+            "ext-price",
+            "lowest",
+        )
+
+        self.assertEqual([row["oem"] for row in rows], ["AAA", "BBB", "ZZZ"])
+        self.assertEqual(rows[0]["crawl_date"], latest)
 
 if __name__ == "__main__":
     unittest.main()

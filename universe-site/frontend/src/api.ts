@@ -755,3 +755,24 @@ export async function exportCccVendorDashboard(params: {
   const response = await client.get<Blob>("/api/universe/market/ccc/vendor-dashboard/export", { params, responseType: "blob" });
   saveBlob(response.data, `ccc-dashboard-${params.vendor.trim().replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "vendor"}.xlsx`);
 }
+
+export async function exportCccLowestPriceSummary(params: {
+  vendor: string;
+  from_date: string;
+  to_date: string;
+}) {
+  const response = await client.get<Blob>("/api/universe/market/ccc/lowest-price/summary/export", {
+    params: { vendor: params.vendor || undefined, from_date: params.from_date || undefined, to_date: params.to_date || undefined },
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = params.vendor
+    ? `ccc-lowest-price-${params.vendor.replace(/[^a-zA-Z0-9]+/g, "-")}.xlsx`
+    : "ccc-lowest-price-all-vendors.xlsx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
